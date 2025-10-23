@@ -1,18 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Container,
+  Box,
   Typography,
   Grid,
-  Card,
-  CardContent,
-  Box,
-  Button,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   Paper,
   Chip,
   CircularProgress,
@@ -26,6 +16,7 @@ import {
   Select,
   MenuItem,
   IconButton,
+  Button,
   Alert,
   Accordion,
   AccordionSummary,
@@ -36,25 +27,76 @@ import {
   ListItemSecondaryAction,
   Divider
 } from '@mui/material';
-import {
-  Add,
-  Edit,
-  Delete,
-  ArrowBack,
-  ExpandMore,
-  MenuBook,
-  Schedule,
-  School,
-  PlayCircleOutline,
-  Description,
-  Assignment,
-  Quiz,
-  VideoLibrary,
-  AttachFile
-} from '@mui/icons-material';
+import { Add, Edit, Delete, ArrowBack, ExpandMore, MenuBook, School, VideoLibrary } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 import api from '../../utils/api';
 import TopicManagement from './TopicManagement';
+
+const toIntOrNull = (value) => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const parsed = Number.parseInt(trimmed, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+};
+
+const clampInt = (value, min, max, fallback) => {
+  const parsed = toIntOrNull(value);
+
+  if (parsed === null) {
+    return fallback;
+  }
+
+  if (typeof min === 'number' && parsed < min) {
+    return min;
+  }
+
+  if (typeof max === 'number' && parsed > max) {
+    return max;
+  }
+
+  return parsed;
+};
+
+const sanitizeStringArray = (values = []) => {
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => (typeof value === 'string' ? value.trim() : ''))
+        .filter(Boolean)
+    )
+  );
+};
+
+const normalizeUnitData = (formData, program) => {
+  const duration = program?.duration || {};
+  const maxYears = clampInt(duration.years, 1, 6, 6);
+  const maxPeriods = clampInt(duration.semesters, 2, 12, 2);
+
+  const year = clampInt(formData.year, 1, maxYears, 1);
+  const semester = clampInt(formData.semester, 1, maxPeriods, 1);
+  const creditHours = clampInt(formData.creditHours, 1, 6, 3);
+
+  return {
+    year,
+    semester,
+    unitCode: typeof formData.unitCode === 'string' ? formData.unitCode.trim().toUpperCase() : '',
+    unitName: typeof formData.unitName === 'string' ? formData.unitName.trim() : '',
+    creditHours,
+    description: typeof formData.description === 'string' ? formData.description.trim() : '',
+    prerequisites: sanitizeStringArray(formData.prerequisites)
+  };
+};
 
 const UnitManagement = ({ program, institution, userRole = 'super_admin', onBack }) => {
   const [units, setUnits] = useState([]);
@@ -63,35 +105,7 @@ const UnitManagement = ({ program, institution, userRole = 'super_admin', onBack
   const [openDialog, setOpenDialog] = useState(false);
   const [editingUnit, setEditingUnit] = useState(null);
   const [selectedUnit, setSelectedUnit] = useState(null);
-  const [managementView, setManagementView] = useState('units'); // 'units', 'topics', 'assessments'
-  
-  // Topic management state
-  const [openTopicDialog, setOpenTopicDialog] = useState(false);
-  const [editingTopic, setEditingTopic] = useState(null);
-  const [topicFormData, setTopicFormData] = useState({
-    topicNumber: 1,
-    title: '',
-    description: '',
-    learningOutcomes: [],
-    content: {
-      lectureVideo: { title: '', url: '', duration: '', isPremium: false },
-      notes: { title: '', url: '', fileType: 'pdf', isPremium: false },
-      additionalResources: []
-    }
-  });
-
-  // Assessment management state
-  const [openAssessmentDialog, setOpenAssessmentDialog] = useState(false);
-  const [assessmentType, setAssessmentType] = useState('cats'); // 'cats', 'assignments', 'pastExams'
-  const [editingAssessment, setEditingAssessment] = useState(null);
-  const [assessmentFormData, setAssessmentFormData] = useState({
-    title: '',
-    description: '',
-    url: '',
-    dueDate: '',
-    totalMarks: 100,
-    isPremium: true
-  });
+  const [managementView, setManagementView] = useState('units');
   const [formData, setFormData] = useState({
     year: 1,
     semester: 1,
@@ -112,14 +126,12 @@ const UnitManagement = ({ program, institution, userRole = 'super_admin', onBack
     try {
       setLoading(true);
       setError(null);
-      
-      // Fetch the full course data to get updated units
+
       const response = await api.get(`/api/courses/${program._id}`);
       setUnits(response.data.course.units || []);
-    } catch (error) {
-      console.error('Error fetching units:', error);
+    } catch (fetchError) {
+      console.error('Error fetching units:', fetchError);
       setError('Failed to load units. Please try again.');
-      // Fallback to program units if API fails
       setUnits(program.units || []);
     } finally {
       setLoading(false);
@@ -136,7 +148,7 @@ const UnitManagement = ({ program, institution, userRole = 'super_admin', onBack
         unitName: unit.unitName || '',
         creditHours: unit.creditHours || 3,
         description: unit.description || '',
-        prerequisites: unit.prerequisites || []
+        prerequisites: Array.isArray(unit.prerequisites) ? unit.prerequisites : []
       });
     } else {
       setEditingUnit(null);
@@ -159,77 +171,119 @@ const UnitManagement = ({ program, institution, userRole = 'super_admin', onBack
   };
 
   const handleInputChange = (field, value) => {
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
       [field]: value
     }));
   };
 
   const handlePrerequisitesChange = (value) => {
-    const prerequisites = value.split(',').map(item => item.trim()).filter(item => item);
-    setFormData(prev => ({
+    const prerequisites = value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    setFormData((prev) => ({
       ...prev,
-      prerequisites: prerequisites
+      prerequisites
     }));
   };
 
+  const periodLabel = 'Semester';
+  const maxPeriods = clampInt(program?.duration?.semesters, 2, 12, 2);
+
   const handleSubmit = async () => {
     try {
-      const unitData = {
-        ...formData,
-        unitCode: formData.unitCode.toUpperCase()
-      };
+      const normalizedUnit = normalizeUnitData(formData, program);
+      const validationErrors = [];
+
+      if (normalizedUnit.year < 1 || normalizedUnit.year > (program.duration?.years || 6)) {
+        validationErrors.push(`Year must be between 1 and ${program.duration?.years || 6}`);
+      }
+
+      if (normalizedUnit.semester < 1 || normalizedUnit.semester > maxPeriods) {
+        validationErrors.push(`Semester must be between 1 and ${maxPeriods}`);
+      }
+
+      if (!normalizedUnit.unitCode || normalizedUnit.unitCode.length < 2) {
+        validationErrors.push('Unit code must be at least 2 characters');
+      }
+
+      if (!normalizedUnit.unitName || normalizedUnit.unitName.length < 2) {
+        validationErrors.push('Unit name must be at least 2 characters');
+      }
+
+      if (!Number.isInteger(normalizedUnit.creditHours) || normalizedUnit.creditHours < 1 || normalizedUnit.creditHours > 6) {
+        validationErrors.push('Credit hours must be between 1 and 6');
+      }
+
+      if (validationErrors.length > 0) {
+        setError(`Please fix the following: ${validationErrors.join(', ')}`);
+        return;
+      }
+
+      setError(null);
+      console.log('📤 Submitting unit data:', normalizedUnit);
 
       if (editingUnit) {
-        // Update existing unit
-        await api.put(`/api/courses/${program._id}/units/${editingUnit._id}`, unitData);
+        await api.put(`/api/courses/${program._id}/units/${editingUnit._id}`, normalizedUnit);
       } else {
-        // Add new unit
-        await api.post(`/api/courses/${program._id}/units`, unitData);
+        await api.post(`/api/courses/${program._id}/units`, normalizedUnit);
       }
-      
+
       await fetchUnits();
       handleCloseDialog();
-    } catch (error) {
-      console.error('Error saving unit:', error);
-      setError('Failed to save unit. Please try again.');
+    } catch (submitError) {
+      console.error('Error saving unit:', submitError.response?.data || submitError);
+      if (submitError.response?.data?.errors?.length) {
+        const details = submitError.response.data.errors
+          .map((err) => `${err.path || err.param}: ${err.msg}`)
+          .join(', ');
+        setError(`Failed to save unit: ${details}`);
+      } else if (submitError.response?.data?.message) {
+        setError(`Failed to save unit: ${submitError.response.data.message}`);
+      } else {
+        setError('Failed to save unit. Please try again.');
+      }
     }
   };
 
   const handleDelete = async (unitId) => {
-    if (window.confirm('Are you sure you want to delete this unit? This action cannot be undone.')) {
-      try {
-        await api.delete(`/api/courses/${program._id}/units/${unitId}`);
-        await fetchUnits();
-      } catch (error) {
-        console.error('Error deleting unit:', error);
-        setError('Failed to delete unit. Please try again.');
-      }
+    if (!window.confirm('Are you sure you want to delete this unit? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      await api.delete(`/api/courses/${program._id}/units/${unitId}`);
+      await fetchUnits();
+    } catch (deleteError) {
+      console.error('Error deleting unit:', deleteError);
+      setError('Failed to delete unit. Please try again.');
     }
   };
 
-  // Group units by year and semester
   const groupedUnits = units.reduce((acc, unit) => {
     const year = unit.year || 1;
     const semester = unit.semester || 1;
-    
+
     if (!acc[year]) {
       acc[year] = {};
     }
     if (!acc[year][semester]) {
       acc[year][semester] = [];
     }
-    
+
     acc[year][semester].push(unit);
     return acc;
   }, {});
 
   const getYearArray = () => {
-    return Array.from({ length: program.duration?.years || 4 }, (_, i) => i + 1);
+    const years = clampInt(program?.duration?.years, 1, 6, 4);
+    return Array.from({ length: years }, (_, i) => i + 1);
   };
 
   const getSemesterArray = () => {
-    return Array.from({ length: program.duration?.semesters || 8 }, (_, i) => i + 1);
+    const count = Math.max(2, maxPeriods);
+    return Array.from({ length: count }, (_, i) => i + 1);
   };
 
   if (loading) {
@@ -240,10 +294,9 @@ const UnitManagement = ({ program, institution, userRole = 'super_admin', onBack
     );
   }
 
-  // Show topic management if a unit is selected
   if (managementView === 'topics' && selectedUnit) {
     return (
-      <TopicManagement 
+      <TopicManagement
         unit={selectedUnit}
         program={program}
         institution={institution}
@@ -258,12 +311,7 @@ const UnitManagement = ({ program, institution, userRole = 'super_admin', onBack
 
   return (
     <Box>
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-      >
-        {/* Header */}
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
           <IconButton onClick={onBack} sx={{ mr: 2 }}>
             <ArrowBack />
@@ -273,15 +321,10 @@ const UnitManagement = ({ program, institution, userRole = 'super_admin', onBack
               Unit Management - {program.name}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              {program.code} • {institution.shortName} • {units.length} units
+              {[program.code, institution?.shortName, `${units.length} units`].filter(Boolean).join(' • ')}
             </Typography>
           </Box>
-          <Button
-            variant="contained"
-            startIcon={<Add />}
-            onClick={() => handleOpenDialog()}
-            sx={{ borderRadius: 2 }}
-          >
+          <Button variant="contained" startIcon={<Add />} onClick={() => handleOpenDialog()} sx={{ borderRadius: 2 }}>
             Add Unit
           </Button>
         </Box>
@@ -292,7 +335,6 @@ const UnitManagement = ({ program, institution, userRole = 'super_admin', onBack
           </Alert>
         )}
 
-        {/* Program Overview */}
         <Paper sx={{ p: 3, mb: 3, bgcolor: 'primary.main', color: 'white' }}>
           <Grid container spacing={2} alignItems="center">
             <Grid item>
@@ -313,40 +355,37 @@ const UnitManagement = ({ program, institution, userRole = 'super_admin', onBack
           </Grid>
         </Paper>
 
-        {/* Units by Year */}
         {getYearArray().map((year) => (
           <Accordion key={year} defaultExpanded={year === 1}>
             <AccordionSummary expandIcon={<ExpandMore />}>
               <Typography variant="h6" color="primary">
                 Year {year}
               </Typography>
-              <Chip 
-                label={`${Object.keys(groupedUnits[year] || {}).reduce((total, sem) => 
-                  total + (groupedUnits[year][sem]?.length || 0), 0)} units`}
-                size="small" 
+              <Chip
+                label={`${Object.keys(groupedUnits[year] || {}).reduce(
+                  (total, sem) => total + (groupedUnits[year][sem]?.length || 0),
+                  0
+                )} units`}
+                size="small"
                 sx={{ ml: 2 }}
               />
             </AccordionSummary>
             <AccordionDetails>
               <Grid container spacing={2}>
-                {[1, 2].map((semester) => (
+                {getSemesterArray().map((semester) => (
                   <Grid item xs={12} md={6} key={semester}>
                     <Paper variant="outlined" sx={{ p: 2 }}>
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                         <Typography variant="subtitle1" color="secondary" sx={{ fontWeight: 600 }}>
-                          Semester {semester}
+                          {`Semester ${semester}`}
                         </Typography>
-                        <Chip 
-                          label={`${groupedUnits[year]?.[semester]?.length || 0} units`}
-                          size="small"
-                          color="secondary"
-                        />
+                        <Chip label={`${groupedUnits[year]?.[semester]?.length || 0} units`} size="small" color="secondary" />
                       </Box>
-                      
+
                       {groupedUnits[year]?.[semester]?.length > 0 ? (
                         <List dense>
                           {groupedUnits[year][semester].map((unit, index) => (
-                            <React.Fragment key={unit._id || index}>
+                            <React.Fragment key={unit._id || `${year}-${semester}-${index}`}>
                               <ListItem>
                                 <ListItemText
                                   primary={
@@ -354,25 +393,19 @@ const UnitManagement = ({ program, institution, userRole = 'super_admin', onBack
                                       <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                                         {unit.unitCode}
                                       </Typography>
-                                      <Chip 
-                                        label={`${unit.creditHours} CH`}
-                                        size="small"
-                                        color="info"
-                                      />
+                                      <Chip label={`${unit.creditHours} CH`} size="small" color="info" />
                                     </Box>
                                   }
                                   secondary={
                                     <Box>
-                                      <Typography variant="body2">
-                                        {unit.unitName}
-                                      </Typography>
+                                      <Typography variant="body2">{unit.unitName}</Typography>
                                       {unit.description && (
                                         <Typography variant="caption" color="text.secondary">
                                           {unit.description.substring(0, 100)}
                                           {unit.description.length > 100 && '...'}
                                         </Typography>
                                       )}
-                                      {unit.prerequisites && unit.prerequisites.length > 0 && (
+                                      {unit.prerequisites?.length > 0 && (
                                         <Typography variant="caption" color="warning.main" display="block">
                                           Prerequisites: {unit.prerequisites.join(', ')}
                                         </Typography>
@@ -392,18 +425,10 @@ const UnitManagement = ({ program, institution, userRole = 'super_admin', onBack
                                   >
                                     <VideoLibrary />
                                   </IconButton>
-                                  <IconButton
-                                    size="small"
-                                    onClick={() => handleOpenDialog(unit)}
-                                    color="primary"
-                                  >
+                                  <IconButton size="small" onClick={() => handleOpenDialog(unit)} color="primary">
                                     <Edit />
                                   </IconButton>
-                                  <IconButton
-                                    size="small"
-                                    onClick={() => handleDelete(unit._id)}
-                                    color="error"
-                                  >
+                                  <IconButton size="small" onClick={() => handleDelete(unit._id)} color="error">
                                     <Delete />
                                   </IconButton>
                                 </ListItemSecondaryAction>
@@ -422,7 +447,7 @@ const UnitManagement = ({ program, institution, userRole = 'super_admin', onBack
                             size="small"
                             startIcon={<Add />}
                             onClick={() => {
-                              setFormData(prev => ({ ...prev, year, semester }));
+                              setFormData((prev) => ({ ...prev, year, semester }));
                               handleOpenDialog();
                             }}
                             sx={{ mt: 1 }}
@@ -448,113 +473,39 @@ const UnitManagement = ({ program, institution, userRole = 'super_admin', onBack
             <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
               Start by adding units for this program. Units are organized by year and semester.
             </Typography>
-            <Button
-              variant="contained"
-              startIcon={<Add />}
-              onClick={() => handleOpenDialog()}
-            >
+            <Button variant="contained" startIcon={<Add />} onClick={() => handleOpenDialog()}>
               Add First Unit
             </Button>
           </Paper>
         )}
 
-        {/* Add/Edit Unit Dialog */}
         <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="sm" fullWidth>
-          <DialogTitle>
-            {editingUnit ? 'Edit Unit' : 'Add New Unit'}
-          </DialogTitle>
+          <DialogTitle>{editingUnit ? 'Edit Unit' : 'Add New Unit'}</DialogTitle>
           <DialogContent>
             <Grid container spacing={2} sx={{ mt: 1 }}>
-              <Grid item xs={6}>
+              <Grid item xs={12} sm={6}>
                 <FormControl fullWidth required>
                   <InputLabel>Year</InputLabel>
                   <Select
                     value={formData.year}
-                    onChange={(e) => handleInputChange('year', e.target.value)}
                     label="Year"
+                    onChange={(e) => handleInputChange('year', Number(e.target.value))}
                   >
-                    {getYearArray().map((year) => (
-                      <MenuItem key={year} value={year}>
-                        Year {year}
+                    {getYearArray().map((yearOption) => (
+                      <MenuItem key={yearOption} value={yearOption}>
+                        Year {yearOption}
                       </MenuItem>
                     ))}
                   </Select>
                 </FormControl>
               </Grid>
-              <Grid item xs={6}>
+              <Grid item xs={12} sm={6}>
                 <FormControl fullWidth required>
-                  <InputLabel>Semester</InputLabel>
+                  <InputLabel>{periodLabel}</InputLabel>
                   <Select
                     value={formData.semester}
-                    onChange={(e) => handleInputChange('semester', e.target.value)}
-                    label="Semester"
+                    label={periodLabel}
+                    onChange={(e) => handleInputChange('semester', Number(e.target.value))}
                   >
-                    <MenuItem value={1}>Semester 1</MenuItem>
-                    <MenuItem value={2}>Semester 2</MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Unit Code"
-                  value={formData.unitCode}
-                  onChange={(e) => handleInputChange('unitCode', e.target.value.toUpperCase())}
-                  required
-                  helperText="e.g., MATH101, ENG201"
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Credit Hours"
-                  type="number"
-                  value={formData.creditHours}
-                  onChange={(e) => handleInputChange('creditHours', parseInt(e.target.value))}
-                  inputProps={{ min: 1, max: 6 }}
-                  required
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Unit Name"
-                  value={formData.unitName}
-                  onChange={(e) => handleInputChange('unitName', e.target.value)}
-                  required
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Description"
-                  multiline
-                  rows={3}
-                  value={formData.description}
-                  onChange={(e) => handleInputChange('description', e.target.value)}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Prerequisites (comma-separated unit codes)"
-                  value={formData.prerequisites.join(', ')}
-                  onChange={(e) => handlePrerequisitesChange(e.target.value)}
-                  helperText="e.g., MATH101, PHYS102"
-                />
-              </Grid>
-            </Grid>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={handleCloseDialog}>Cancel</Button>
-            <Button onClick={handleSubmit} variant="contained">
-              {editingUnit ? 'Update' : 'Add Unit'}
-            </Button>
-          </DialogActions>
-        </Dialog>
-      </motion.div>
-    </Box>
-  );
-};
-
-export default UnitManagement;
+                    {getSemesterArray().map((semesterOption) => (
+                      <MenuItem key=设备throw

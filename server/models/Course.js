@@ -33,8 +33,13 @@ const courseSchema = new mongoose.Schema({
       type: Number,
       required: true,
       min: 2,
-      max: 12
+      max: 180
     }
+  },
+  scheduleType: {
+    type: String,
+    enum: ['semesters', 'terms'],
+    default: 'semesters'
   },
   description: {
     type: String,
@@ -52,6 +57,41 @@ const courseSchema = new mongoose.Schema({
   },
   entryRequirements: String, // Detailed entry requirements text
   careerProspects: [String],
+  subcourses: {
+    type: [String],
+    default: [],
+    validate: {
+      validator: function(arr) {
+        return Array.isArray(arr) && arr.every(item => typeof item === 'string' && item.trim().length > 0);
+      },
+      message: 'Subcourses must be non-empty strings'
+    }
+  },
+  academicYears: [{
+    name: {
+      type: String,
+      required: true,
+      trim: true
+    },
+    startDate: {
+      type: Date
+    },
+    endDate: {
+      type: Date
+    },
+    isActive: {
+      type: Boolean,
+      default: false
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now
+    },
+    updatedAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
   units: [{
     year: {
       type: Number,
@@ -63,7 +103,12 @@ const courseSchema = new mongoose.Schema({
       type: Number,
       required: true,
       min: 1,
-      max: 2
+      max: 12
+    },
+    subcourse: {
+      type: String,
+      trim: true,
+      default: ''
     },
     unitCode: {
       type: String,
@@ -172,6 +217,11 @@ const courseSchema = new mongoose.Schema({
       cats: [{
         title: String,
         description: String,
+        academicYear: {
+          type: String,
+          trim: true,
+          default: ''
+        },
         filename: String, // Image file name
         filePath: String, // Server file path
         fileSize: Number, // File size in bytes
@@ -223,6 +273,21 @@ const courseSchema = new mongoose.Schema({
           type: Date,
           default: Date.now
         },
+        uploadedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User'
+        },
+        status: {
+          type: String,
+          enum: ['pending', 'approved', 'rejected'],
+          default: 'pending'
+        },
+        reviewedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User'
+        },
+        reviewDate: Date,
+        reviewNotes: String,
         isPremium: {
           type: Boolean,
           default: true
@@ -232,6 +297,11 @@ const courseSchema = new mongoose.Schema({
         title: String,
         year: Number,
         semester: Number,
+        academicYear: {
+          type: String,
+          trim: true,
+          default: ''
+        },
         filename: String, // Image file name
         filePath: String, // Server file path
         fileSize: Number, // File size in bytes
@@ -248,12 +318,42 @@ const courseSchema = new mongoose.Schema({
           type: Date,
           default: Date.now
         },
+        uploadedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User'
+        },
+        status: {
+          type: String,
+          enum: ['pending', 'approved', 'rejected'],
+          default: 'pending'
+        },
+        reviewedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User'
+        },
+        reviewDate: Date,
+        reviewNotes: String,
         isPremium: {
           type: Boolean,
           default: true
         }
       }]
     }
+  }],
+  unitIds: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Unit',
+    index: true
+  }],
+  topicIds: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Topic',
+    index: true
+  }],
+  assessmentIds: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Assessment',
+    index: true
   }],
   fees: {
     local: {

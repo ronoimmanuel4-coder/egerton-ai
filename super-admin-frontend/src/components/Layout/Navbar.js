@@ -28,6 +28,7 @@ import {
   Person,
   Analytics,
   Security,
+  AssignmentTurnedIn,
   SupervisorAccount,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -66,6 +67,7 @@ const Navbar = () => {
     { label: 'Dashboard', path: '/super-admin', icon: <Dashboard />, auth: true, roles: ['super_admin'] },
     { label: 'Institutions', path: '/super-admin#institutions', icon: <School />, auth: true, roles: ['super_admin'] },
     { label: 'User Management', path: '/super-admin#user-management', icon: <SupervisorAccount />, auth: true, roles: ['super_admin'] },
+    { label: 'Content Approval', path: '/super-admin#content-approval', icon: <AssignmentTurnedIn />, auth: true, roles: ['super_admin'] },
     { label: 'Financial Analytics', path: '/super-admin#financial', icon: <Analytics />, auth: true, roles: ['super_admin'] },
     { label: 'System Health', path: '/super-admin#system-health', icon: <Security />, auth: true, roles: ['super_admin'] },
   ];
@@ -74,7 +76,10 @@ const Navbar = () => {
     if (path.includes('#')) {
       // Handle tab navigation within super admin dashboard
       const [basePath, tabId] = path.split('#');
-      navigate(basePath);
+      if (location.pathname !== basePath) {
+        navigate(basePath);
+      }
+      window.location.hash = `#${tabId}`;
       
       // Dispatch custom event to switch tabs
       setTimeout(() => {
@@ -83,7 +88,15 @@ const Navbar = () => {
         }));
       }, 100);
     } else {
-      navigate(path);
+      if (location.pathname !== path) {
+        navigate(path);
+      }
+      window.location.hash = '#overview';
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('superAdminTabChange', {
+          detail: { tabId: 'overview' }
+        }));
+      }, 100);
     }
   };
 
@@ -92,20 +105,41 @@ const Navbar = () => {
       {navigationItems.map((item) => {
         if (item.auth && !isAuthenticated) return null;
         if (item.roles && !hasAnyRole(item.roles)) return null;
-        
-        const isActive = item.path.includes('#') 
-          ? location.pathname === '/super-admin' && location.hash === item.path.split('#')[1]
-          : location.pathname === item.path;
-        
+
+        const [basePath, hash] = item.path.split('#');
+        const isActive = hash
+          ? location.pathname === basePath && location.hash === `#${hash}`
+          : location.pathname === item.path && (!location.hash || location.hash === '#overview' || location.hash === '');
+
         return (
           <Button
             key={item.path}
             color="inherit"
             onClick={() => handleTabNavigation(item.path)}
             sx={{
-              backgroundColor: isActive ? 'rgba(255,255,255,0.1)' : 'transparent',
+              position: 'relative',
+              px: 2.5,
+              py: 1,
+              borderRadius: 3,
+              transition: 'all 0.3s ease',
+              background: isActive ? 'linear-gradient(120deg, rgba(255,255,255,0.25), rgba(255,255,255,0.05))' : 'transparent',
+              boxShadow: isActive ? '0 8px 20px rgba(124,77,255,0.35)' : 'none',
+              '&::after': {
+                content: '""',
+                position: 'absolute',
+                left: 12,
+                right: 12,
+                bottom: 6,
+                height: 3,
+                borderRadius: 999,
+                background: 'linear-gradient(90deg, #ff4081, #7c4dff)',
+                transform: isActive ? 'scaleX(1)' : 'scaleX(0)',
+                transformOrigin: 'center',
+                transition: 'transform 0.35s ease',
+              },
               '&:hover': {
-                backgroundColor: 'rgba(255,255,255,0.1)',
+                backgroundColor: 'rgba(255,255,255,0.12)',
+                boxShadow: '0 8px 20px rgba(124,77,255,0.25)',
               },
             }}
           >

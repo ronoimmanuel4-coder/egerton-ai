@@ -139,7 +139,9 @@ const SecureContentViewer = ({
 
   const getFileUrl = () => {
     const token = localStorage.getItem('token');
-    return `${backendUrl}/api/upload/file/${filename}?token=${encodeURIComponent(token)}`;
+    const baseUrl = `${backendUrl}/api/upload/file/${filename}?token=${encodeURIComponent(token)}`;
+    // Hide native toolbar/download controls in most browsers
+    return `${baseUrl}#toolbar=0&navpanes=0&scrollbar=0&zoom=page-fit`;
   };
 
   return (
@@ -208,6 +210,7 @@ const SecureContentViewer = ({
               display: 'block'
             }}
             title={title}
+            sandbox="allow-same-origin allow-scripts"
             onContextMenu={(e) => e.preventDefault()}
           />
         )}

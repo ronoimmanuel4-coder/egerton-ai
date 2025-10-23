@@ -68,7 +68,8 @@ const fileFilter = (req, file, cb) => {
   const allowedTypes = {
     lectureVideo: ['video/mp4', 'video/avi', 'video/mov', 'video/wmv', 'video/flv'],
     notes: ['application/pdf'],
-    assessment: ['image/jpeg', 'image/jpg', 'image/png', 'image/gif']
+    assessment: ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'application/pdf'],
+    image: ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'application/pdf']
   };
 
   let fieldAllowedTypes;
@@ -135,6 +136,9 @@ const uploadFields = upload.fields([
 
 // Single file upload
 const uploadSingle = upload.single('file');
+const uploadVideo = upload.single('lectureVideo');
+const uploadNotes = upload.single('notes');
+const uploadAssessment = upload.single('assessment');
 
 // Error handling middleware
 const handleUploadError = (error, req, res, next) => {
@@ -169,6 +173,9 @@ module.exports = {
   upload,
   uploadFields,
   uploadSingle,
+  uploadVideo,
+  uploadNotes,
+  uploadAssessment,
   uploadWithLimits,
   handleUploadError,
   uploadDirs

@@ -106,18 +106,22 @@ router.get('/my-assessments', [
     console.log(`📊 Found ${userAssessments.length} assessments for user ${userId}`);
 
     res.json({
-      success: true,
-      count: userAssessments.length,
-      assessments: userAssessments
+      topics: {
+        pending: pendingTopics,
+        approved: approvedTopics,
+        rejected: rejectedTopics,
+        sample: topicSamples.slice(0, 10)
+      },
+      assessments: {
+        pending: pendingAssessments,
+        approved: approvedAssessments,
+        rejected: rejectedAssessments,
+        sample: assessmentSamples.slice(0, 10)
+      }
     });
-
   } catch (error) {
-    console.error('❌ Error fetching user assessments:', error);
-    res.status(500).json({ 
-      success: false,
-      message: 'Server error',
-      error: error.message 
-    });
+    console.error(`❌ Error fetching content status for super admin ${req.user.id}:`, error);
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 

@@ -13,6 +13,7 @@ import {
   CircularProgress,
   Collapse,
   useTheme,
+  useMediaQuery,
   alpha,
 } from '@mui/material';
 import {
@@ -30,6 +31,7 @@ import { useAuth } from '../../contexts/AuthContext';
 
 const ChatbotWidget = () => {
   const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const { user } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState([
@@ -208,16 +210,16 @@ const ChatbotWidget = () => {
         transition={{ delay: 1 }}
         style={{
           position: 'fixed',
-          bottom: 20,
-          right: 20,
+          bottom: isMobile ? 16 : 20,
+          right: isMobile ? 16 : 20,
           zIndex: 1000,
         }}
       >
         <IconButton
           onClick={() => setIsOpen(!isOpen)}
           sx={{
-            width: 60,
-            height: 60,
+            width: isMobile ? 56 : 60,
+            height: isMobile ? 56 : 60,
             bgcolor: theme.palette.primary.main,
             color: 'white',
             boxShadow: theme.shadows[8],
@@ -242,10 +244,12 @@ const ChatbotWidget = () => {
             transition={{ duration: 0.3 }}
             style={{
               position: 'fixed',
-              bottom: 100,
-              right: 20,
-              width: 400,
-              height: 600,
+              bottom: isMobile ? 0 : 100,
+              right: isMobile ? 0 : 20,
+              left: isMobile ? 0 : 'auto',
+              width: isMobile ? '100%' : 400,
+              height: isMobile ? '100vh' : 600,
+              maxHeight: isMobile ? '100vh' : 600,
               zIndex: 999,
             }}
           >
@@ -255,7 +259,7 @@ const ChatbotWidget = () => {
                 height: '100%',
                 display: 'flex',
                 flexDirection: 'column',
-                borderRadius: 3,
+                borderRadius: isMobile ? 0 : 3,
                 overflow: 'hidden',
               }}
             >
@@ -264,15 +268,15 @@ const ChatbotWidget = () => {
                 sx={{
                   bgcolor: theme.palette.primary.main,
                   color: 'white',
-                  p: 2,
+                  p: isMobile ? 1.5 : 2,
                   display: 'flex',
                   alignItems: 'center',
                   gap: 1,
                 }}
               >
-                <SmartToy />
-                <Typography variant="h6" sx={{ flexGrow: 1 }}>
-                  EduVault AI Assistant
+                <SmartToy sx={{ fontSize: isMobile ? 20 : 24 }} />
+                <Typography variant={isMobile ? 'subtitle1' : 'h6'} sx={{ flexGrow: 1 }}>
+                  {isMobile ? 'AI Assistant' : 'EduVault AI Assistant'}
                 </Typography>
                 <IconButton
                   size="small"
@@ -288,7 +292,7 @@ const ChatbotWidget = () => {
                 sx={{
                   flexGrow: 1,
                   overflow: 'auto',
-                  p: 1,
+                  p: isMobile ? 1 : 1.5,
                   bgcolor: alpha(theme.palette.background.default, 0.5),
                 }}
               >
@@ -304,8 +308,8 @@ const ChatbotWidget = () => {
                     <Paper
                       elevation={1}
                       sx={{
-                        p: 1.5,
-                        maxWidth: '80%',
+                        p: isMobile ? 1 : 1.5,
+                        maxWidth: isMobile ? '85%' : '80%',
                         bgcolor: message.type === 'user' 
                           ? theme.palette.primary.main 
                           : message.isError 
@@ -345,18 +349,18 @@ const ChatbotWidget = () => {
 
               {/* Suggestions */}
               {suggestions.length > 0 && (
-                <Box sx={{ p: 1, borderTop: 1, borderColor: 'divider' }}>
-                  <Typography variant="caption" sx={{ mb: 1, display: 'block' }}>
+                <Box sx={{ p: isMobile ? 0.75 : 1, borderTop: 1, borderColor: 'divider' }}>
+                  <Typography variant="caption" sx={{ mb: 0.5, display: 'block', fontSize: isMobile ? '0.65rem' : '0.75rem' }}>
                     Quick suggestions:
                   </Typography>
                   <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                    {suggestions.slice(0, 4).map((suggestion, index) => (
+                    {suggestions.slice(0, isMobile ? 3 : 4).map((suggestion, index) => (
                       <Chip
                         key={index}
                         label={suggestion}
                         size="small"
                         onClick={() => handleSuggestionClick(suggestion)}
-                        sx={{ fontSize: '0.7rem' }}
+                        sx={{ fontSize: isMobile ? '0.65rem' : '0.7rem' }}
                       />
                     ))}
                   </Box>
@@ -364,18 +368,23 @@ const ChatbotWidget = () => {
               )}
 
               {/* Input */}
-              <Box sx={{ p: 2, borderTop: 1, borderColor: 'divider' }}>
+              <Box sx={{ p: isMobile ? 1.5 : 2, borderTop: 1, borderColor: 'divider' }}>
                 <Box sx={{ display: 'flex', gap: 1 }}>
                   <TextField
                     fullWidth
                     multiline
-                    maxRows={3}
-                    placeholder="Ask me anything about your studies..."
+                    maxRows={isMobile ? 2 : 3}
+                    placeholder={isMobile ? "Ask me anything..." : "Ask me anything about your studies..."}
                     value={inputMessage}
                     onChange={(e) => setInputMessage(e.target.value)}
                     onKeyPress={handleKeyPress}
                     disabled={isLoading}
                     size="small"
+                    sx={{
+                      '& .MuiInputBase-input': {
+                        fontSize: isMobile ? '0.875rem' : '1rem',
+                      }
+                    }}
                   />
                   <IconButton
                     onClick={() => sendMessage()}
@@ -383,11 +392,13 @@ const ChatbotWidget = () => {
                     sx={{
                       bgcolor: theme.palette.primary.main,
                       color: 'white',
+                      minWidth: isMobile ? 40 : 48,
+                      height: isMobile ? 40 : 48,
                       '&:hover': { bgcolor: theme.palette.primary.dark },
                       '&:disabled': { bgcolor: 'grey.300' },
                     }}
                   >
-                    <Send />
+                    <Send sx={{ fontSize: isMobile ? 18 : 24 }} />
                   </IconButton>
                 </Box>
               </Box>

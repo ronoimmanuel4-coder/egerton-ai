@@ -89,7 +89,11 @@ const SecureImageViewer = ({ type, id, onClose, open = false }) => {
       }
     } catch (error) {
       console.error('Error fetching assessment:', error);
-      setError('Failed to load assessment. Please check your connection and try again.');
+      if (error.response?.status === 404) {
+        setError('This secure assessment is not yet available. Please check back later or contact your instructor.');
+      } else {
+        setError('Failed to load assessment. Please check your connection and try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -290,7 +294,13 @@ const SecureImageViewer = ({ type, id, onClose, open = false }) => {
 
     } catch (error) {
       console.error('Error loading secure image:', error);
-      setError('Failed to load assessment image. Please try again or contact support.');
+      if (error.response?.status === 404) {
+        setError('The secure assessment file is unavailable. Please contact support for assistance.');
+      } else if (error.response?.status === 401) {
+        setError('Your session has expired. Please refresh the page and try again.');
+      } else {
+        setError('Failed to load assessment image. Please try again or contact support.');
+      }
     } finally {
       setLoading(false);
     }

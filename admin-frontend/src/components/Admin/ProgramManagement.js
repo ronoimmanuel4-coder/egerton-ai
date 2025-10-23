@@ -7,12 +7,6 @@ import {
   CardContent,
   Box,
   Button,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   Paper,
   Chip,
   CircularProgress,
@@ -29,28 +23,97 @@ import {
   Alert,
   Tabs,
   Tab,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemSecondaryAction
+  Stack,
+  DialogContentText
 } from '@mui/material';
-import {
-  Add,
-  Edit,
-  Delete,
-  ArrowBack,
-  School,
-  AccessTime,
-  ExpandMore,
-  MenuBook,
-  Settings
-} from '@mui/icons-material';
+import AddIcon from '@mui/icons-material/Add';
+import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import SchoolIcon from '@mui/icons-material/School';
+import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import MenuBookIcon from '@mui/icons-material/MenuBook';
+import SettingsIcon from '@mui/icons-material/Settings';
 import { motion } from 'framer-motion';
 import api from '../../utils/api';
 import UnitManagement from './UnitManagement';
+
+const toPositiveInt = (value) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
+const clampInt = (value, min, max, fallback) => {
+  const parsed = toPositiveInt(value);
+  if (parsed === null) {
+    return fallback;
+  }
+
+  if (typeof min === 'number' && parsed < min) {
+    return min;
+  }
+
+  if (typeof max === 'number' && parsed > max) {
+    return max;
+  }
+
+  return parsed;
+};
+
+const normalizeFrontendSchedule = (value) => {
+  if (typeof value !== 'string') {
+    return 'semester';
+  }
+  const lowered = value.toLowerCase();
+  if (lowered === 'term' || lowered === 'terms') {
+    return 'term';
+  }
+  return 'semester';
+};
+
+const mapScheduleForBackend = (value) => (value === 'term' ? 'terms' : 'semesters');
+
+const mapScheduleFromBackend = (value) => normalizeFrontendSchedule(value);
+
+const buildDurationState = (duration = {}, scheduleOverride = 'semester') => {
+  const normalizedSchedule = normalizeFrontendSchedule(scheduleOverride || duration.scheduleType);
+
+  const years = clampInt(duration.years, 1, 6, 1);
+  const rawPeriods = duration.semesters ?? duration.terms ?? duration.periods;
+  const minPeriods = normalizedSchedule === 'term' ? Math.max(3, years) : Math.max(2, years);
+  const maxPeriods = normalizedSchedule === 'term' ? 180 : 24;
+  const defaultPeriods = normalizedSchedule === 'term'
+    ? Math.max(minPeriods, years * 3)
+    : Math.max(minPeriods, years * 2);
+  const periods = clampInt(rawPeriods, minPeriods, maxPeriods, defaultPeriods);
+
+  return {
+    years,
+    scheduleType: normalizedSchedule,
+    semesters: periods,
+    terms: periods
+  };
+};
+
+const sanitizeDurationForSubmit = (duration, scheduleType = 'semester') => {
+  const normalizedSchedule = normalizeFrontendSchedule(scheduleType);
+  const normalized = buildDurationState(duration, normalizedSchedule);
+  const { years, semesters } = normalized;
+  const periodsPerYear = years > 0 ? Math.max(1, Math.round(semesters / years)) : 1;
+
+  return {
+    years,
+    scheduleType: mapScheduleForBackend(normalizedSchedule),
+    periodsPerYear,
+    terms: semesters,
+    semesters
+  };
+};
+
+const scheduleOptions = [
+  { value: 'semester', label: 'Semesters (2 per year minimum)' },
+  { value: 'term', label: 'Terms (3 per year minimum)' }
+];
 
 const ProgramManagement = ({ institution, userRole = 'mini_admin', onBack }) => {
   const [programs, setPrograms] = useState([]);
@@ -60,24 +123,38 @@ const ProgramManagement = ({ institution, userRole = 'mini_admin', onBack }) => 
   const [editingProgram, setEditingProgram] = useState(null);
   const [selectedProgram, setSelectedProgram] = useState(null);
   const [tabValue, setTabValue] = useState(0);
+  const [selectedSubcourse, setSelectedSubcourse] = useState('');
+  const [subcourseDialogOpen, setSubcourseDialogOpen] = useState(false);
+  const [pendingProgram, setPendingProgram] = useState(null);
+  const [pendingSubcourse, setPendingSubcourse] = useState('');
   const [formData, setFormData] = useState({
     name: '',
     code: '',
     department: '',
-    level: '',
-    duration: {
-      years: 1,
-      semesters: 2
-    },
+    level: 'Diploma',
+    scheduleType: 'semester',
+    duration: buildDurationState({ years: 1, semesters: 2 }, 'semester'),
     description: '',
     entryRequirements: '',
     careerProspects: [],
+    subcourses: [],
     fees: {
       local: '',
       international: '',
       currency: 'KSH'
     }
   });
+  const [subcourseInput, setSubcourseInput] = useState('');
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [programToDelete, setProgramToDelete] = useState(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
+  const periodInputLabel = formData.scheduleType === 'term' ? 'Duration (Terms)' : 'Duration (Semesters)';
+  const periodHelperText = formData.scheduleType === 'term'
+    ? 'Total terms across the full program'
+    : 'Total semesters across the full program';
+  const minPeriodsForSchedule = formData.scheduleType === 'term' ? 3 : 2;
+  const maxPeriodsForSchedule = formData.scheduleType === 'term' ? 180 : 24;
 
   const programLevels = [
     'Certificate',
@@ -123,19 +200,20 @@ const ProgramManagement = ({ institution, userRole = 'mini_admin', onBack }) => 
 
   const handleOpenDialog = (program = null) => {
     if (program) {
+      const scheduleType = mapScheduleFromBackend(program.scheduleType || program.duration?.scheduleType);
+      const normalizedLevel = program.level && programLevels.includes(program.level) ? program.level : 'Diploma';
       setEditingProgram(program);
       setFormData({
         name: program.name || '',
         code: program.code || '',
         department: program.department || '',
-        level: program.level || '',
-        duration: {
-          years: program.duration?.years || 1,
-          semesters: program.duration?.semesters || 2
-        },
+        level: normalizedLevel,
+        scheduleType,
+        duration: buildDurationState(program.duration, scheduleType),
         description: program.description || '',
         entryRequirements: program.entryRequirements || '',
         careerProspects: program.careerProspects || [],
+        subcourses: Array.isArray(program.subcourses) ? program.subcourses : [],
         fees: {
           local: program.fees?.local || '',
           international: program.fees?.international || '',
@@ -148,24 +226,48 @@ const ProgramManagement = ({ institution, userRole = 'mini_admin', onBack }) => 
         name: '',
         code: '',
         department: '',
-        level: '',
-        duration: { years: 1, semesters: 2 },
+        level: 'Diploma',
+        scheduleType: 'semester',
+        duration: buildDurationState({ years: 1, semesters: 2 }, 'semester'),
         description: '',
         entryRequirements: '',
         careerProspects: [],
+        subcourses: [],
         fees: { local: '', international: '', currency: 'KSH' }
       });
     }
+    setSubcourseInput('');
     setOpenDialog(true);
   };
 
   const handleCloseDialog = () => {
     setOpenDialog(false);
     setEditingProgram(null);
+    setSubcourseInput('');
   };
 
   const handleInputChange = (field, value, nested = null) => {
+    if (field === 'scheduleType') {
+      setFormData(prev => ({
+        ...prev,
+        scheduleType: value,
+        duration: buildDurationState(prev.duration, value)
+      }));
+      return;
+    }
+
     if (nested) {
+      if (nested === 'duration') {
+        setFormData(prev => ({
+          ...prev,
+          duration: buildDurationState({
+            ...prev.duration,
+            [field]: value
+          }, prev.scheduleType)
+        }));
+        return;
+      }
+
       setFormData(prev => ({
         ...prev,
         [nested]: {
@@ -173,12 +275,13 @@ const ProgramManagement = ({ institution, userRole = 'mini_admin', onBack }) => 
           [field]: value
         }
       }));
-    } else {
-      setFormData(prev => ({
-        ...prev,
-        [field]: value
-      }));
+      return;
     }
+
+    setFormData(prev => ({
+      ...prev,
+      [field]: value
+    }));
   };
 
   const handleCareerProspectsChange = (value) => {
@@ -189,10 +292,53 @@ const ProgramManagement = ({ institution, userRole = 'mini_admin', onBack }) => 
     }));
   };
 
+  const handleAddSubcourse = () => {
+    const value = subcourseInput.trim();
+    if (!value) return;
+    setFormData(prev => {
+      if (prev.subcourses.includes(value)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        subcourses: [...prev.subcourses, value]
+      };
+    });
+    setSubcourseInput('');
+  };
+
+  const handleRemoveSubcourse = (value) => {
+    setFormData(prev => ({
+      ...prev,
+      subcourses: prev.subcourses.filter(sub => sub !== value)
+    }));
+  };
+
+  const handleSubcourseKeyDown = (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      handleAddSubcourse();
+    }
+  };
+
   const handleSubmit = async () => {
     try {
+      const sanitizedSubcourses = Array.from(new Set(
+        (formData.subcourses || [])
+          .map(sub => (typeof sub === 'string' ? sub.trim() : ''))
+          .filter(Boolean)
+      ));
+
+      const frontendSchedule = normalizeFrontendSchedule(formData.scheduleType);
+      const normalizedDuration = sanitizeDurationForSubmit(formData.duration, frontendSchedule);
+      const backendScheduleType = mapScheduleForBackend(frontendSchedule);
+
       const programData = {
         ...formData,
+        scheduleType: backendScheduleType,
+        duration: normalizedDuration,
+        level: programLevels.includes(formData.level) ? formData.level : 'Diploma',
+        subcourses: sanitizedSubcourses,
         institution: institution._id
       };
 
@@ -210,20 +356,78 @@ const ProgramManagement = ({ institution, userRole = 'mini_admin', onBack }) => 
     }
   };
 
-  const handleDelete = async (programId) => {
-    if (window.confirm('Are you sure you want to delete this program? This action cannot be undone.')) {
-      try {
-        await api.delete(`/api/courses/${programId}`);
-        await fetchPrograms();
-      } catch (error) {
-        console.error('Error deleting program:', error);
-        setError('Failed to delete program. Please try again.');
+  const openDeleteDialog = (program) => {
+    setProgramToDelete(program);
+    setDeleteDialogOpen(true);
+  };
+
+  const closeDeleteDialog = () => {
+    setDeleteDialogOpen(false);
+    setProgramToDelete(null);
+  };
+
+  const handleDelete = async () => {
+    if (!programToDelete) return;
+
+    try {
+      setDeleteLoading(true);
+      await api.delete(`/api/courses/${programToDelete._id}`);
+      if (editingProgram?._id === programToDelete._id) {
+        handleCloseDialog();
       }
+      closeDeleteDialog();
+      if (selectedProgram?._id === programToDelete._id) {
+        setSelectedProgram(null);
+        setTabValue(0);
+      }
+      await fetchPrograms();
+    } catch (error) {
+      console.error('Error deleting program:', error);
+      setError('Failed to delete program. Please try again.');
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
+  };
+
+  const handleSelectProgramForUnits = (program) => {
+    if (Array.isArray(program.subcourses) && program.subcourses.length > 0) {
+      setPendingProgram(program);
+      setPendingSubcourse('');
+      setSubcourseDialogOpen(true);
+    } else {
+      setSelectedProgram(program);
+      setSelectedSubcourse('');
+      setTabValue(1);
+    }
+  };
+
+  const handleConfirmSubcourse = () => {
+    if (!pendingProgram) {
+      setSubcourseDialogOpen(false);
+      return;
+    }
+
+    if (!pendingSubcourse) {
+      // Require selection before proceeding
+      return;
+    }
+
+    setSelectedProgram(pendingProgram);
+    setSelectedSubcourse(pendingSubcourse);
+    setTabValue(1);
+    setSubcourseDialogOpen(false);
+    setPendingProgram(null);
+    setPendingSubcourse('');
+  };
+
+  const handleCancelSubcourseDialog = () => {
+    setSubcourseDialogOpen(false);
+    setPendingProgram(null);
+    setPendingSubcourse('');
   };
 
   if (loading) {
@@ -244,7 +448,7 @@ const ProgramManagement = ({ institution, userRole = 'mini_admin', onBack }) => 
         {/* Header */}
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
           <IconButton onClick={onBack} sx={{ mr: 2 }}>
-            <ArrowBack />
+            {ArrowBackIcon ? <ArrowBackIcon /> : 'Back'}
           </IconButton>
           <Box sx={{ flexGrow: 1 }}>
             <Typography variant="h5" component="h2" color="primary" sx={{ fontWeight: 600 }}>
@@ -256,7 +460,7 @@ const ProgramManagement = ({ institution, userRole = 'mini_admin', onBack }) => 
           </Box>
           <Button
             variant="contained"
-            startIcon={<Add />}
+            startIcon={AddIcon ? <AddIcon /> : null}
             onClick={() => handleOpenDialog()}
             sx={{ borderRadius: 2 }}
           >
@@ -284,7 +488,9 @@ const ProgramManagement = ({ institution, userRole = 'mini_admin', onBack }) => 
             {programs.length === 0 ? (
               <Grid item xs={12}>
                 <Paper sx={{ p: 4, textAlign: 'center' }}>
-                  <School sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
+                  {SchoolIcon ? (
+                    <SchoolIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
+                  ) : null}
                   <Typography variant="h6" color="text.secondary" gutterBottom>
                     No programs found
                   </Typography>
@@ -293,7 +499,7 @@ const ProgramManagement = ({ institution, userRole = 'mini_admin', onBack }) => 
                   </Typography>
                   <Button
                     variant="contained"
-                    startIcon={<Add />}
+                    startIcon={AddIcon ? <AddIcon /> : null}
                     onClick={() => handleOpenDialog()}
                   >
                     Add First Program
@@ -301,95 +507,121 @@ const ProgramManagement = ({ institution, userRole = 'mini_admin', onBack }) => 
                 </Paper>
               </Grid>
             ) : (
-              programs.map((program) => (
-                <Grid item xs={12} md={6} lg={4} key={program._id}>
-                  <motion.div
-                    whileHover={{ scale: 1.02 }}
-                    transition={{ duration: 0.2 }}
-                  >
-                    <Card sx={{ height: '100%' }}>
-                      <CardContent>
-                        <Typography variant="h6" sx={{ fontWeight: 600, mb: 1 }}>
-                          {program.name}
-                        </Typography>
-                        
-                        <Typography variant="body2" color="text.secondary" gutterBottom>
-                          {program.code} • {program.department}
-                        </Typography>
-                        
-                        <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap' }}>
-                          <Chip 
-                            label={program.level} 
-                            color="primary" 
-                            size="small"
-                          />
-                          <Chip 
-                            icon={<AccessTime />}
-                            label={`${program.duration?.years} Years`} 
-                            color="secondary" 
-                            size="small"
-                          />
-                          <Chip 
-                            icon={<MenuBook />}
-                            label={`${program.duration?.semesters} Semesters`} 
-                            color="info" 
-                            size="small"
-                          />
-                        </Box>
-                        
-                        <Typography variant="body2" sx={{ mb: 2, minHeight: 60 }}>
-                          {program.description?.substring(0, 120)}
-                          {program.description?.length > 120 && '...'}
-                        </Typography>
-                        
-                        {program.careerProspects && program.careerProspects.length > 0 && (
-                          <Box sx={{ mb: 2 }}>
-                            <Typography variant="caption" color="text.secondary">
-                              Career Prospects:
-                            </Typography>
-                            <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>
-                              {program.careerProspects.slice(0, 2).join(', ')}
-                              {program.careerProspects.length > 2 && '...'}
-                            </Typography>
+              (Array.isArray(programs) ? programs.filter((program) => program && typeof program === 'object' && !Array.isArray(program)) : []).map((program, index) => {
+                if (!program || typeof program !== 'object') {
+                  return null;
+                }
+
+                const duration = program.duration && typeof program.duration === 'object'
+                  ? program.duration
+                  : {};
+                const scheduleTypeRaw = typeof program.scheduleType === 'string'
+                  ? program.scheduleType.toLowerCase()
+                  : undefined;
+                const scheduleType = scheduleTypeRaw === 'term' ? 'term' : 'semester';
+                const periodLabelText = scheduleType === 'term' ? 'Terms' : 'Semesters';
+                const yearsValue = duration.years ?? duration.Years ?? duration.year;
+                const periodsValue = duration.semesters ?? duration.terms ?? duration.Semesters;
+                const durationYears = typeof yearsValue === 'number' ? yearsValue : Number(yearsValue);
+                const durationPeriods = typeof periodsValue === 'number' ? periodsValue : Number(periodsValue);
+                const hasYears = Number.isFinite(durationYears) && durationYears > 0;
+                const hasPeriods = Number.isFinite(durationPeriods) && durationPeriods > 0;
+                const perYear = hasYears && hasPeriods ? durationPeriods / durationYears : null;
+                const periodsLabel = hasPeriods
+                  ? `${durationPeriods} ${periodLabelText}${Number.isFinite(perYear) ? ` • ${(durationYears > 0 ? perYear.toFixed(2) : '0.00')} per year` : ''}`
+                  : null;
+
+                return (
+                  <Grid item xs={12} md={6} lg={4} key={program._id || index}>
+                    <motion.div
+                      whileHover={{ scale: 1.02 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <Card sx={{ height: '100%' }}>
+                        <CardContent>
+                          <Typography variant="h6" sx={{ fontWeight: 600, mb: 1 }}>
+                            {program.name}
+                          </Typography>
+
+                          <Typography variant="body2" color="text.secondary" gutterBottom>
+                            {[program.code, program.department].filter(Boolean).join(' • ')}
+                          </Typography>
+
+                          <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap' }}>
+                            {program.level && (
+                              <Chip
+                                label={program.level}
+                                color="primary"
+                                size="small"
+                              />
+                            )}
+                            {hasYears && (
+                              <Chip
+                                icon={AccessTimeIcon ? <AccessTimeIcon /> : undefined}
+                                label={`${durationYears} Years`}
+                                color="secondary"
+                                size="small"
+                              />
+                            )}
+                            {periodsLabel && (
+                              <Chip
+                                icon={MenuBookIcon ? <MenuBookIcon /> : undefined}
+                                label={periodsLabel}
+                                color="info"
+                                size="small"
+                              />
+                            )}
                           </Box>
-                        )}
-                        
-                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            startIcon={<Settings />}
-                            onClick={() => {
-                              setSelectedProgram(program);
-                              setTabValue(1);
-                            }}
-                          >
-                            Units
-                          </Button>
-                          
-                          <IconButton
-                            size="small"
-                            onClick={() => handleOpenDialog(program)}
-                            color="primary"
-                          >
-                            <Edit />
-                          </IconButton>
-                          
-                          {userRole === 'super_admin' && (
+
+                          <Typography variant="body2" sx={{ mb: 2, minHeight: 60 }}>
+                            {program.description?.substring(0, 120)}
+                            {program.description?.length > 120 && '...'}
+                          </Typography>
+
+                          {Array.isArray(program.subcourses) && program.subcourses.length > 0 && (
+                            <Box sx={{ mb: 2 }}>
+                              <Typography variant="caption" color="text.secondary">
+                                Subcourses:
+                              </Typography>
+                              <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>
+                                {program.subcourses.slice(0, 3).join(', ')}
+                                {program.subcourses.length > 3 && '...'}
+                              </Typography>
+                            </Box>
+                          )}
+
+                          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                            <Button
+                              size="small"
+                              variant="contained"
+                              startIcon={SettingsIcon ? <SettingsIcon /> : null}
+                              onClick={() => handleSelectProgramForUnits(program)}
+                            >
+                              Units
+                            </Button>
                             <IconButton
                               size="small"
-                              onClick={() => handleDelete(program._id)}
-                              color="error"
+                              onClick={() => handleOpenDialog(program)}
+                              color="primary"
                             >
-                              <Delete />
+                              {EditIcon ? <EditIcon /> : 'Edit'}
                             </IconButton>
-                          )}
-                        </Box>
-                      </CardContent>
-                    </Card>
-                  </motion.div>
-                </Grid>
-              ))
+
+                            <Button
+                              size="small"
+                              color="error"
+                              startIcon={DeleteIcon ? <DeleteIcon /> : null}
+                              onClick={() => openDeleteDialog(program)}
+                            >
+                              Delete
+                            </Button>
+                          </Box>
+                        </CardContent>
+                      </Card>
+                    </motion.div>
+                  </Grid>
+                );
+              })
             )}
           </Grid>
         )}
@@ -399,9 +631,41 @@ const ProgramManagement = ({ institution, userRole = 'mini_admin', onBack }) => 
             program={selectedProgram}
             institution={institution}
             userRole={userRole}
+            selectedSubcourse={selectedSubcourse}
             onBack={() => setTabValue(0)}
           />
         )}
+
+        <Dialog open={subcourseDialogOpen} onClose={handleCancelSubcourseDialog}>
+          <DialogTitle>Select Subcourse</DialogTitle>
+          <DialogContent>
+            <FormControl fullWidth sx={{ mt: 1 }}>
+              <InputLabel>Subcourse</InputLabel>
+              <Select
+                label="Subcourse"
+                value={pendingSubcourse}
+                onChange={(event) => setPendingSubcourse(event.target.value)}
+              >
+                {pendingProgram?.subcourses?.map((subcourse) => (
+                  <MenuItem key={subcourse} value={subcourse}>
+                    {subcourse}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            {!pendingSubcourse && (
+              <Typography variant="body2" color="error" sx={{ mt: 2 }}>
+                Please select a subcourse to continue.
+              </Typography>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={handleCancelSubcourseDialog}>Cancel</Button>
+            <Button onClick={handleConfirmSubcourse} variant="contained" disabled={!pendingSubcourse}>
+              Continue
+            </Button>
+          </DialogActions>
+        </Dialog>
 
         {/* Add/Edit Program Dialog */}
         <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
@@ -410,7 +674,7 @@ const ProgramManagement = ({ institution, userRole = 'mini_admin', onBack }) => 
           </DialogTitle>
           <DialogContent>
             <Grid container spacing={2} sx={{ mt: 1 }}>
-              <Grid item xs={12} sm={8}>
+              <Grid item xs={12} md={6}>
                 <TextField
                   fullWidth
                   label="Program Name"
@@ -419,7 +683,7 @@ const ProgramManagement = ({ institution, userRole = 'mini_admin', onBack }) => 
                   required
                 />
               </Grid>
-              <Grid item xs={12} sm={4}>
+              <Grid item xs={12} md={6}>
                 <TextField
                   fullWidth
                   label="Program Code"
@@ -428,29 +692,22 @@ const ProgramManagement = ({ institution, userRole = 'mini_admin', onBack }) => 
                   required
                 />
               </Grid>
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Department</InputLabel>
-                  <Select
-                    value={formData.department}
-                    onChange={(e) => handleInputChange('department', e.target.value)}
-                    label="Department"
-                  >
-                    {commonDepartments.map((dept) => (
-                      <MenuItem key={dept} value={dept}>
-                        {dept}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Department"
+                  value={formData.department}
+                  onChange={(e) => handleInputChange('department', e.target.value)}
+                  required
+                />
               </Grid>
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth required>
-                  <InputLabel>Level</InputLabel>
+              <Grid item xs={12} md={6}>
+                <FormControl fullWidth>
+                  <InputLabel>Program Level</InputLabel>
                   <Select
                     value={formData.level}
+                    label="Program Level"
                     onChange={(e) => handleInputChange('level', e.target.value)}
-                    label="Level"
                   >
                     {programLevels.map((level) => (
                       <MenuItem key={level} value={level}>
@@ -460,79 +717,135 @@ const ProgramManagement = ({ institution, userRole = 'mini_admin', onBack }) => 
                   </Select>
                 </FormControl>
               </Grid>
-              <Grid item xs={12} sm={6}>
+              <Grid item xs={12} md={4}>
+                <FormControl fullWidth required>
+                  <InputLabel>Academic Schedule</InputLabel>
+                  <Select
+                    value={formData.scheduleType}
+                    label="Academic Schedule"
+                    onChange={(e) => handleInputChange('scheduleType', e.target.value)}
+                  >
+                    {scheduleOptions.map((option) => (
+                      <MenuItem key={option.value} value={option.value}>
+                        {option.label}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12} md={4}>
                 <TextField
                   fullWidth
                   label="Duration (Years)"
                   type="number"
                   value={formData.duration.years}
-                  onChange={(e) => handleInputChange('years', parseInt(e.target.value), 'duration')}
+                  onChange={(e) => handleInputChange('years', parseInt(e.target.value, 10) || 0, 'duration')}
                   inputProps={{ min: 1, max: 6 }}
+                  required
                 />
               </Grid>
-              <Grid item xs={12} sm={6}>
+              <Grid item xs={12} md={4}>
                 <TextField
                   fullWidth
-                  label="Duration (Semesters)"
+                  label={periodInputLabel}
                   type="number"
                   value={formData.duration.semesters}
-                  onChange={(e) => handleInputChange('semesters', parseInt(e.target.value), 'duration')}
-                  inputProps={{ min: 2, max: 12 }}
+                  helperText={periodHelperText}
+                  onChange={(e) => handleInputChange('semesters', parseInt(e.target.value, 10) || 0, 'duration')}
+                  inputProps={{
+                    min: Math.max(minPeriodsForSchedule, formData.duration.years || 1),
+                    max: maxPeriodsForSchedule
+                  }}
+                  required
                 />
               </Grid>
               <Grid item xs={12}>
                 <TextField
                   fullWidth
                   label="Description"
-                  multiline
-                  rows={3}
                   value={formData.description}
                   onChange={(e) => handleInputChange('description', e.target.value)}
+                  multiline
+                  minRows={3}
                 />
               </Grid>
               <Grid item xs={12}>
                 <TextField
                   fullWidth
                   label="Entry Requirements"
-                  multiline
-                  rows={2}
                   value={formData.entryRequirements}
                   onChange={(e) => handleInputChange('entryRequirements', e.target.value)}
+                  multiline
+                  minRows={2}
                 />
               </Grid>
               <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Career Prospects (comma-separated)"
-                  value={formData.careerProspects.join(', ')}
-                  onChange={(e) => handleCareerProspectsChange(e.target.value)}
-                  helperText="Enter career prospects separated by commas"
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Local Student Fees"
-                  type="number"
-                  value={formData.fees.local}
-                  onChange={(e) => handleInputChange('local', e.target.value, 'fees')}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="International Student Fees"
-                  type="number"
-                  value={formData.fees.international}
-                  onChange={(e) => handleInputChange('international', e.target.value, 'fees')}
-                />
+                <Box>
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                    Subcourses
+                  </Typography>
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2, flexWrap: 'wrap' }}>
+                    <TextField
+                      label="Add Subcourse"
+                      value={subcourseInput}
+                      onChange={(e) => setSubcourseInput(e.target.value)}
+                      onKeyDown={handleSubcourseKeyDown}
+                      size="small"
+                    />
+                    <Button variant="outlined" startIcon={<AddIcon />} onClick={handleAddSubcourse}>
+                      Add
+                    </Button>
+                  </Stack>
+                  <Stack direction="row" spacing={1} flexWrap="wrap">
+                    {formData.subcourses.map((subcourse) => (
+                      <Chip
+                        key={subcourse}
+                        label={subcourse}
+                        onDelete={() => handleRemoveSubcourse(subcourse)}
+                        deleteIcon={<DeleteIcon />}
+                        sx={{ mb: 1 }}
+                      />
+                    ))}
+                  </Stack>
+                </Box>
               </Grid>
             </Grid>
           </DialogContent>
           <DialogActions>
+            {editingProgram && (
+              <Button
+                color="error"
+                startIcon={<DeleteIcon />}
+                onClick={() => openDeleteDialog(editingProgram)}
+              >
+                Delete Program
+              </Button>
+            )}
             <Button onClick={handleCloseDialog}>Cancel</Button>
             <Button onClick={handleSubmit} variant="contained">
               {editingProgram ? 'Update' : 'Create'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog open={deleteDialogOpen} onClose={closeDeleteDialog}>
+          <DialogTitle>Delete Program</DialogTitle>
+          <DialogContent>
+            <DialogContentText>
+              Are you sure you want to delete the program "{programToDelete?.name}"? This action cannot be undone.
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={closeDeleteDialog} disabled={deleteLoading}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleDelete}
+              color="error"
+              variant="contained"
+              disabled={deleteLoading}
+            >
+              {deleteLoading ? 'Deleting...' : 'Delete'}
             </Button>
           </DialogActions>
         </Dialog>

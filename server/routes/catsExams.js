@@ -634,20 +634,41 @@ router.delete('/admin/exams/:id', authenticateToken, requireRole('mini_admin', '
 // Get available CATs for student
 router.get('/student/cats', authenticateToken, requireRole('student'), async (req, res) => {
   try {
-    // Filter CATs available to the student
+    console.log('📝 Fetching CATs for student:', req.user.id);
+    
+    // Fetch approved CATs from database
+    const cats = await Assessment.find({ 
+      type: 'cat', 
+      status: 'approved',
+      isActive: true 
+    })
+      .populate('courseId', 'name code')
+      .populate('unitId', 'unitName unitCode year semester')
+      .sort({ dueDate: -1 })
+      .lean();
+
+    console.log(`Found ${cats.length} approved CATs`);
+
+    // Format CATs with additional info
     const availableCATs = cats.map(cat => ({
-      ...cat,
-      hasViewed: assessmentLogs.some(log => 
-        log.assessmentId === cat._id && 
-        log.userId === req.user.id && 
-        log.action === 'start_viewing'
-      ),
-      viewCount: assessmentLogs.filter(log => 
-        log.assessmentId === cat._id && 
-        log.userId === req.user.id && 
-        log.action === 'start_viewing'
-      ).length,
-      isAvailable: new Date() >= new Date(cat.createdAt) && cat.status === 'active'
+      _id: cat._id,
+      title: cat.title,
+      unitId: cat.unitId?._id,
+      unitName: cat.unitName || cat.unitId?.unitName,
+      unitCode: cat.unitCode || cat.unitId?.unitCode,
+      description: cat.description || '',
+      dueDate: cat.dueDate,
+      totalMarks: cat.totalMarks,
+      duration: cat.duration || cat.durationMinutes,
+      status: cat.status,
+      hasViewed: false, // TODO: Track in separate collection
+      viewCount: cat.viewCount || 0,
+      maxViews: cat.maxViews || 3,
+      createdBy: cat.createdByName || 'Instructor',
+      instructions: cat.instructions || '',
+      isAvailable: cat.status === 'approved',
+      isPremium: cat.isPremium !== false,
+      imageUrl: `/api/secure-images/cat/${cat._id}`
     }));
 
     res.json({
@@ -667,21 +688,41 @@ router.get('/student/cats', authenticateToken, requireRole('student'), async (re
 // Get available Exams for student
 router.get('/student/exams', authenticateToken, requireRole('student'), async (req, res) => {
   try {
-    // Filter Exams available to the student
+    console.log('📝 Fetching Exams for student:', req.user.id);
+    
+    // Fetch approved Exams and Past Exams from database
+    const exams = await Assessment.find({ 
+      type: { $in: ['exam', 'pastExam'] },
+      status: 'approved',
+      isActive: true 
+    })
+      .populate('courseId', 'name code')
+      .populate('unitId', 'unitName unitCode year semester')
+      .sort({ dueDate: -1 })
+      .lean();
+
+    console.log(`Found ${exams.length} approved Exams/Past Exams`);
+
+    // Format Exams with additional info
     const availableExams = exams.map(exam => ({
-      ...exam,
-      hasViewed: assessmentLogs.some(log => 
-        log.assessmentId === exam._id && 
-        log.userId === req.user.id && 
-        log.action === 'start_viewing'
-      ),
-      viewCount: assessmentLogs.filter(log => 
-        log.assessmentId === exam._id && 
-        log.userId === req.user.id && 
-        log.action === 'start_viewing'
-      ).length,
-      isAvailable: new Date() >= new Date(exam.createdAt) && 
-                  (exam.status === 'active' || exam.status === 'scheduled')
+      _id: exam._id,
+      title: exam.title,
+      unitId: exam.unitId?._id,
+      unitName: exam.unitName || exam.unitId?.unitName,
+      unitCode: exam.unitCode || exam.unitId?.unitCode,
+      description: exam.description || '',
+      dueDate: exam.dueDate,
+      totalMarks: exam.totalMarks,
+      duration: exam.duration || exam.durationMinutes,
+      status: exam.status,
+      hasViewed: false, // TODO: Track in separate collection
+      viewCount: exam.viewCount || 0,
+      maxViews: exam.maxViews || 1,
+      createdBy: exam.createdByName || 'Instructor',
+      instructions: exam.instructions || '',
+      isAvailable: exam.status === 'approved',
+      isPremium: exam.isPremium !== false,
+      imageUrl: `/api/secure-images/${exam.type}/${exam._id}`
     }));
 
     res.json({

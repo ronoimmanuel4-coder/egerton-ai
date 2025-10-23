@@ -2,6 +2,7 @@ const express = require('express');
 const Course = require('../models/Course');
 const Subscription = require('../models/Subscription');
 const { auth } = require('../middleware/auth');
+const { getApprovedCourseContentNormalized } = require('../services/contentService');
 const router = express.Router();
 
 // @route   GET /api/student/course/:courseId/content
@@ -34,186 +35,13 @@ router.get('/course/:courseId/content', auth, async (req, res) => {
       }
     }
 
-    const approvedContent = [];
-
-    // Filter units by year and semester if provided
-    let filteredUnits = course.units;
-    if (year) {
-      filteredUnits = filteredUnits.filter(unit => unit.year == year);
-    }
-    if (semester) {
-      filteredUnits = filteredUnits.filter(unit => unit.semester == semester);
-    }
-
-    filteredUnits.forEach(unit => {
-      // Process topics and their content
-      unit.topics.forEach(topic => {
-        const hasSubscription = userSubscriptions[unit.year] || false;
-
-        // Add approved lecture videos
-        if (topic.content?.lectureVideo?.status === 'approved') {
-          const isVideoPremium = topic.content.lectureVideo.isPremium || false;
-          const canAccess = !isVideoPremium || hasSubscription;
-
-          approvedContent.push({
-            id: `${unit._id}-${topic._id}-video`,
-            type: 'video',
-            title: topic.content.lectureVideo.title || topic.title,
-            description: topic.description,
-            filename: canAccess ? topic.content.lectureVideo.filename : null,
-            fileSize: topic.content.lectureVideo.fileSize,
-            duration: topic.content.lectureVideo.duration,
-            isPremium: isVideoPremium,
-            hasAccess: canAccess,
-            requiresSubscription: isVideoPremium && !hasSubscription,
-            uploadDate: topic.content.lectureVideo.uploadDate,
-            accessRules: {
-              canStream: canAccess,
-              canDownload: false, // Videos never downloadable
-              preventScreenshot: true,
-              preventRecording: true
-            },
-            unit: {
-              id: unit._id,
-              name: unit.unitName,
-              code: unit.unitCode,
-              year: unit.year,
-              semester: unit.semester
-            },
-            topic: {
-              id: topic._id,
-              title: topic.title,
-              number: topic.topicNumber
-            }
-          });
-        }
-
-        // Add approved notes (download only with subscription)
-        if (topic.content?.notes?.status === 'approved') {
-          const isNotesPremium = topic.content.notes.isPremium || false;
-          const canDownload = !isNotesPremium || hasSubscription;
-
-          approvedContent.push({
-            id: `${unit._id}-${topic._id}-notes`,
-            type: 'notes',
-            title: topic.content.notes.title || `${topic.title} - Notes`,
-            description: topic.description,
-            filename: topic.content.notes.filename,
-            fileSize: topic.content.notes.fileSize,
-            isPremium: isNotesPremium,
-            hasAccess: true, // Can always view, but download requires subscription
-            requiresSubscription: isNotesPremium && !hasSubscription,
-            uploadDate: topic.content.notes.uploadDate,
-            accessRules: {
-              canView: true,
-              canDownload: canDownload,
-              downloadRequiresSubscription: isNotesPremium
-            },
-            unit: {
-              id: unit._id,
-              name: unit.unitName,
-              code: unit.unitCode,
-              year: unit.year,
-              semester: unit.semester
-            },
-            topic: {
-              id: topic._id,
-              title: topic.title,
-              number: topic.topicNumber
-            }
-          });
-        }
-
-        // Add YouTube resources
-        if (topic.content?.youtubeResources?.length > 0) {
-          topic.content.youtubeResources.forEach((youtube, index) => {
-            approvedContent.push({
-              id: `${unit._id}-${topic._id}-youtube-${index}`,
-              type: 'youtube',
-              title: youtube.title,
-              description: youtube.description,
-              url: youtube.url,
-              isPremium: youtube.isPremium || false,
-              unit: {
-                id: unit._id,
-                name: unit.unitName,
-                code: unit.unitCode,
-                year: unit.year,
-                semester: unit.semester
-              },
-              topic: {
-                id: topic._id,
-                title: topic.title,
-                number: topic.topicNumber
-              }
-            });
-          });
-        }
-      });
-
-      // Process assessments with specific access rules
-      if (unit.assessments) {
-        ['cats', 'assignments', 'pastExams'].forEach(assessmentType => {
-          if (unit.assessments[assessmentType]) {
-            unit.assessments[assessmentType].forEach(assessment => {
-              if (assessment.status === 'approved') {
-                const hasSubscription = userSubscriptions[unit.year] || false;
-                const isAssessmentPremium = assessment.isPremium || false;
-                
-                // Access rules based on assessment type
-                let accessRules = {};
-                if (assessmentType === 'assignments') {
-                  // Assignments are always free per unit
-                  accessRules = {
-                    canView: true,
-                    canDownload: true,
-                    isFree: true,
-                    preventScreenshot: false
-                  };
-                } else if (assessmentType === 'cats' || assessmentType === 'pastExams') {
-                  // CATs and Exams: view only on site, prevent screenshots
-                  const canAccess = !isAssessmentPremium || hasSubscription;
-                  accessRules = {
-                    canView: canAccess,
-                    canDownload: false, // Never downloadable
-                    viewOnlyOnSite: true,
-                    preventScreenshot: true,
-                    preventRecording: true,
-                    requiresSubscription: isAssessmentPremium && !hasSubscription
-                  };
-                }
-
-                approvedContent.push({
-                  id: `${unit._id}-${assessment._id}-${assessmentType}`,
-                  type: assessmentType,
-                  title: assessment.title,
-                  description: assessment.description,
-                  filename: accessRules.canView ? assessment.filename : null,
-                  fileSize: assessment.fileSize,
-                  isPremium: isAssessmentPremium,
-                  hasAccess: accessRules.canView || accessRules.isFree,
-                  requiresSubscription: accessRules.requiresSubscription || false,
-                  uploadDate: assessment.uploadDate,
-                  dueDate: assessment.dueDate,
-                  totalMarks: assessment.totalMarks,
-                  accessRules,
-                  unit: {
-                    id: unit._id,
-                    name: unit.unitName,
-                    code: unit.unitCode,
-                    year: unit.year,
-                    semester: unit.semester
-                  }
-                });
-              }
-            });
-          }
-        });
-      }
+    const normalizedResult = await getApprovedCourseContentNormalized(courseId, {
+      year,
+      semester,
+      userSubscriptions
     });
 
-    // Sort content by upload date (newest first)
-    approvedContent.sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate));
+    const approvedContent = Array.isArray(normalizedResult?.content) ? normalizedResult.content : [];
 
     res.json({
       course: {
@@ -293,6 +121,131 @@ router.get('/course/:courseId/units', auth, async (req, res) => {
   } catch (error) {
     console.error('❌ Error fetching course units:', error);
     res.status(500).json({ message: 'Server error fetching units' });
+  }
+});
+
+// @route   GET /api/student/assessments
+// @desc    Get approved assessments for student (CATs, Exams, Past Papers)
+// @access  Private (Students)
+router.get('/assessments', auth, async (req, res) => {
+  try {
+    const { courseId, unitId, type, year, semester } = req.query;
+    const userId = req.user.id;
+
+    console.log('📝 Fetching approved assessments for student:', userId);
+
+    const Assessment = require('../models/Assessment');
+    
+    // Build query for approved assessments only
+    let query = { 
+      status: 'approved',
+      isActive: true
+    };
+
+    if (courseId) query.courseId = courseId;
+    if (unitId) query.unitId = unitId;
+    if (type) query.type = type;
+
+    // Fetch approved assessments
+    const assessments = await Assessment.find(query)
+      .populate('courseId', 'name code')
+      .populate('unitId', 'unitName unitCode year semester')
+      .populate('uploadedBy', 'firstName lastName')
+      .sort({ dueDate: -1, createdAt: -1 })
+      .lean();
+
+    // Filter by year/semester if provided
+    let filteredAssessments = assessments;
+    if (year || semester) {
+      filteredAssessments = assessments.filter(assessment => {
+        const unitYear = assessment.unitId?.year;
+        const unitSemester = assessment.unitId?.semester;
+        
+        if (year && unitYear !== parseInt(year)) return false;
+        if (semester && unitSemester !== parseInt(semester)) return false;
+        
+        return true;
+      });
+    }
+
+    // Check user's subscription status for premium content
+    const Subscription = require('../models/Subscription');
+    const userSubscriptions = {};
+    
+    // Group by course and year to check subscriptions
+    const coursesYears = new Set();
+    filteredAssessments.forEach(a => {
+      if (a.courseId?._id && a.unitId?.year) {
+        coursesYears.add(`${a.courseId._id}_${a.unitId.year}`);
+      }
+    });
+
+    for (const key of coursesYears) {
+      const [cId, yr] = key.split('_');
+      userSubscriptions[key] = await Subscription.hasActiveSubscription(userId, cId, parseInt(yr));
+    }
+
+    // Format assessments with access info
+    const formattedAssessments = filteredAssessments.map(assessment => {
+      const subscriptionKey = `${assessment.courseId?._id}_${assessment.unitId?.year}`;
+      const hasSubscription = userSubscriptions[subscriptionKey] || false;
+      const canAccess = !assessment.isPremium || hasSubscription;
+
+      return {
+        _id: assessment._id,
+        type: assessment.type,
+        title: assessment.title,
+        description: assessment.description || '',
+        status: assessment.status,
+        dueDate: assessment.dueDate,
+        totalMarks: assessment.totalMarks,
+        duration: assessment.duration || assessment.durationMinutes,
+        instructions: assessment.instructions || '',
+        academicYear: assessment.academicYear,
+        difficulty: assessment.difficulty,
+        tags: assessment.tags || [],
+        courseId: assessment.courseId?._id,
+        courseName: assessment.courseId?.name,
+        courseCode: assessment.courseId?.code,
+        unitId: assessment.unitId?._id,
+        unitName: assessment.unitName || assessment.unitId?.unitName,
+        unitCode: assessment.unitCode || assessment.unitId?.unitCode,
+        year: assessment.unitId?.year,
+        semester: assessment.unitId?.semester,
+        isPremium: assessment.isPremium !== false,
+        canAccess,
+        hasSubscription,
+        maxViews: assessment.maxViews || 3,
+        viewCount: assessment.viewCount || 0,
+        createdAt: assessment.createdAt,
+        imageUrl: canAccess ? `/api/secure-images/${assessment.type}/${assessment._id}` : null
+      };
+    });
+
+    // Group by type
+    const groupedAssessments = {
+      cats: formattedAssessments.filter(a => a.type === 'cat'),
+      exams: formattedAssessments.filter(a => a.type === 'exam'),
+      pastExams: formattedAssessments.filter(a => a.type === 'pastExam'),
+      assignments: formattedAssessments.filter(a => a.type === 'assignment')
+    };
+
+    res.json({
+      success: true,
+      assessments: formattedAssessments,
+      grouped: groupedAssessments,
+      totalCount: formattedAssessments.length,
+      premiumCount: formattedAssessments.filter(a => a.isPremium).length,
+      accessibleCount: formattedAssessments.filter(a => a.canAccess).length
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching student assessments:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error fetching assessments',
+      error: error.message 
+    });
   }
 });
 

@@ -3,6 +3,10 @@ import { lazy } from 'react';
 // Lazy load components for better performance (Admin-focused)
 export const LazyLoginPage = lazy(() => import('../pages/Auth/LoginPage'));
 export const LazyAdminDashboard = lazy(() => import('../pages/Admin/AdminDashboard'));
+export const LazyVideoManagement = lazy(() => import('../pages/Admin/VideoManagementPage'));
+export const LazyNotesManagement = lazy(() => import('../pages/Admin/NotesManagementPage'));
+export const LazyCATManagement = lazy(() => import('../pages/Admin/CATManagementPage'));
+export const LazyExamManagement = lazy(() => import('../pages/Admin/ExamManagementPage'));
 
 // Loading fallback component
 export const PageLoader = () => {

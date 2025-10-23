@@ -7,6 +7,7 @@ export const LazyRegisterPage = lazy(() => import('../pages/Auth/RegisterPage'))
 export const LazyInstitutionPage = lazy(() => import('../pages/InstitutionPage'));
 export const LazyCoursePage = lazy(() => import('../pages/CoursePage'));
 export const LazyResourcesPage = lazy(() => import('../pages/ResourcesPage'));
+export const LazyDownloadsPage = lazy(() => import('../pages/DownloadsPage'));
 export const LazyJobsPage = lazy(() => import('../pages/JobsPage'));
 export const LazyProfilePage = lazy(() => import('../pages/ProfilePage'));
 // Admin components removed - this is student-only frontend

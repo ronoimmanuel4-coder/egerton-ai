@@ -1,8 +1,32 @@
 import axios from 'axios';
 
+const DEFAULT_BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5001';
+
+const resolveBackendUrl = () => {
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    const isLocalNetwork =
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname.startsWith('192.168.') ||
+      hostname.endsWith('.local');
+
+    if (isLocalNetwork && DEFAULT_BACKEND_URL.includes('onrender')) {
+      console.warn(
+        '🔄 Overriding backend URL for local development. Using http://localhost:5001 instead of remote Render endpoint.'
+      );
+      return 'http://localhost:5001';
+    }
+  }
+
+  return DEFAULT_BACKEND_URL;
+};
+
+const resolvedBackendUrl = resolveBackendUrl();
+
 // Create axios instance with base URL
 const api = axios.create({
-  baseURL: process.env.REACT_APP_BACKEND_URL,
+  baseURL: resolvedBackendUrl,
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json',
@@ -12,9 +36,14 @@ const api = axios.create({
 
 // Add a request interceptor to ensure all requests use the baseURL
 api.interceptors.request.use(config => {
+  const backendUrl = resolveBackendUrl();
+
+  // Update baseURL dynamically in case environment changed after initialization
+  config.baseURL = backendUrl;
+
   // If the URL doesn't start with http, prepend the baseURL
-  if (!config.url.startsWith('http') && !config.url.startsWith(process.env.REACT_APP_BACKEND_URL)) {
-    config.url = `${process.env.REACT_APP_BACKEND_URL}${config.url.startsWith('/') ? '' : '/'}${config.url}`;
+  if (!config.url.startsWith('http') && !config.url.startsWith(backendUrl)) {
+    config.url = `${backendUrl}${config.url.startsWith('/') ? '' : '/'}${config.url}`;
   }
   return config;
 });

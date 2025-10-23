@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect } from 'react';
 import {
   Container,
   Typography,
@@ -15,7 +15,10 @@ import {
   Divider,
   IconButton,
   useTheme,
-  alpha
+  alpha,
+  LinearProgress,
+  Skeleton,
+  Stack
 } from '@mui/material';
 import {
   School,
@@ -29,7 +32,8 @@ import {
 } from '@mui/icons-material';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import api from '../utils/api';
+import { slideFromLeft, slideFromRight, hoverLift } from '../utils/motionPresets';
+import { fetchInstitutionById, fetchCourses } from '../utils/dataApi';
 
 const InstitutionPage = () => {
   const [institution, setInstitution] = useState(null);
@@ -39,20 +43,23 @@ const InstitutionPage = () => {
   const navigate = useNavigate();
   const theme = useTheme();
 
+  useLayoutEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, [id]);
+
   useEffect(() => {
     fetchInstitutionData();
   }, [id]);
 
   const fetchInstitutionData = async () => {
     try {
-      // Fetch institutions
-      const institutionsResponse = await api.get('/api/institutions');
-      const foundInstitution = institutionsResponse.data.institutions.find(inst => inst._id === id);
-      setInstitution(foundInstitution);
+      // Fetch single institution by ID
+      const inst = await fetchInstitutionById(id);
+      setInstitution(inst);
 
       // Fetch courses for this institution
-      const coursesResponse = await api.get(`/api/courses?institution=${id}`);
-      setCourses(coursesResponse.data.courses);
+      const courseList = await fetchCourses({ institution: id });
+      setCourses(courseList);
     } catch (error) {
       console.error('Error fetching institution data:', error);
     } finally {
@@ -62,8 +69,42 @@ const InstitutionPage = () => {
 
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
-        <CircularProgress />
+      <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
+        <LinearProgress color="primary" sx={{ position: 'sticky', top: 0, left: 0, zIndex: 10 }} />
+        <Container maxWidth="lg" sx={{ py: 6 }}>
+          <Stack spacing={4}>
+            <motion.div
+              initial={{ opacity: 0.6 }}
+              animate={{ opacity: [0.6, 1, 0.6] }}
+              transition={{ duration: 1.5, repeat: Infinity }}
+            >
+              <Paper elevation={6} sx={{ p: 4, borderRadius: 4, background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.primary.dark} 100%)`, color: 'white' }}>
+                <Stack direction={{ xs: 'column', md: 'row' }} spacing={3} alignItems="center">
+                  <Avatar sx={{ width: 80, height: 80, bgcolor: 'rgba(255,255,255,0.25)' }}>
+                    <School sx={{ fontSize: 40 }} />
+                  </Avatar>
+                  <Box sx={{ flexGrow: 1, width: '100%' }}>
+                    <Skeleton variant="text" width="60%" height={40} sx={{ bgcolor: 'rgba(255,255,255,0.3)' }} />
+                    <Skeleton variant="text" width="35%" height={24} sx={{ bgcolor: 'rgba(255,255,255,0.2)' }} />
+                    <Skeleton variant="rectangular" width="100%" height={16} sx={{ mt: 2, bgcolor: 'rgba(255,255,255,0.18)' }} />
+                  </Box>
+                </Stack>
+              </Paper>
+            </motion.div>
+
+            <Grid container spacing={3}>
+              {Array.from({ length: 4 }).map((_, index) => (
+                <Grid item xs={12} md={6} key={`institution-skeleton-${index}`}>
+                  <Paper variant="outlined" sx={{ p: 3, borderRadius: 3 }}>
+                    <Skeleton variant="text" width="50%" height={28} />
+                    <Skeleton variant="text" width="70%" height={20} />
+                    <Skeleton variant="rectangular" width="100%" height={120} sx={{ mt: 2, borderRadius: 2 }} />
+                  </Paper>
+                </Grid>
+              ))}
+            </Grid>
+          </Stack>
+        </Container>
       </Box>
     );
   }
@@ -228,20 +269,25 @@ const InstitutionPage = () => {
           </Box>
         ) : (
           <Grid container spacing={3}>
-            {courses.map((course) => (
+            {courses.map((course, index) => (
               <Grid item xs={12} md={6} key={course._id}>
                 <motion.div
-                  whileHover={{ scale: 1.02 }}
-                  transition={{ duration: 0.2 }}
+                  variants={index % 2 === 0 ? slideFromLeft : slideFromRight}
+                  initial="hidden"
+                  whileInView="visible"
+                  viewport={{ once: true, amount: 0.3 }}
+                  custom={index}
                 >
                   <Card 
                     sx={{ 
                       height: '100%',
                       cursor: 'pointer',
-                      '&:hover': {
-                        boxShadow: 6
-                      }
+                      borderRadius: 3,
+                      border: `2px solid ${alpha(theme.palette.primary.main, 0.1)}`,
                     }}
+                    component={motion.div}
+                    whileHover={hoverLift.whileHover}
+                    transition={hoverLift.transition}
                     onClick={() => navigate(`/course/${course._id}`)}
                   >
                     <CardContent>
@@ -255,15 +301,19 @@ const InstitutionPage = () => {
                         Department: {course.department}
                       </Typography>
                       <Box sx={{ mt: 2 }}>
-                        <Chip 
-                          label={`${course.duration.years} Years`} 
-                          size="small" 
-                          sx={{ mr: 1 }}
-                        />
-                        <Chip 
-                          label={`${course.duration.semesters} Semesters`} 
-                          size="small" 
-                        />
+                        {course.duration?.years && (
+                          <Chip 
+                            label={`${course.duration.years} Years`} 
+                            size="small" 
+                            sx={{ mr: 1 }}
+                          />
+                        )}
+                        {course.duration?.semesters && (
+                          <Chip 
+                            label={`${course.duration.semesters} Semesters`} 
+                            size="small" 
+                          />
+                        )}
                       </Box>
                       <Button 
                         variant="contained" 

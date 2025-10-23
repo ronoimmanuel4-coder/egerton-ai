@@ -4,6 +4,8 @@ const path = require('path');
 const fs = require('fs');
 const { auth } = require('../middleware/auth');
 const Resource = require('../models/Resource');
+const Assessment = require('../models/Assessment');
+const Course = require('../models/Course');
 
 // Test route to verify the secure-images path is working
 router.get('/test', (req, res) => {
@@ -32,7 +34,6 @@ router.get('/:type/:id', auth, async (req, res) => {
     console.log(`🔍 Looking for assessment: type=${type}, id=${id}`);
     
     const mongoose = require('mongoose');
-    const Course = require('../models/Course');
     
     // Validate MongoDB ObjectId format
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -47,6 +48,8 @@ router.get('/:type/:id', auth, async (req, res) => {
     const courses = await Course.find({});
     let foundAssessment = null;
     let assessmentType = null;
+    let foundCourse = null;
+    let foundUnit = null;
 
     for (const course of courses) {
       for (const unit of course.units) {
@@ -56,6 +59,8 @@ router.get('/:type/:id', auth, async (req, res) => {
             foundAssessment = unit.assessments.cats.id(id);
             if (foundAssessment) {
               assessmentType = 'cats';
+              foundCourse = course;
+              foundUnit = unit;
               break;
             }
           }
@@ -64,6 +69,8 @@ router.get('/:type/:id', auth, async (req, res) => {
             foundAssessment = unit.assessments.pastExams.id(id);
             if (foundAssessment) {
               assessmentType = 'pastExams';
+              foundCourse = course;
+              foundUnit = unit;
               break;
             }
           }
@@ -72,12 +79,72 @@ router.get('/:type/:id', auth, async (req, res) => {
             foundAssessment = unit.assessments.assignments.id(id);
             if (foundAssessment) {
               assessmentType = 'assignments';
+              foundCourse = course;
+              foundUnit = unit;
               break;
             }
           }
         }
       }
       if (foundAssessment) break;
+    }
+    if (!foundAssessment) {
+      console.log(`ℹ️ Embedded assessment not found, checking Assessment collection: ${type}/${id}`);
+
+      const assessmentTypeMap = {
+        cats: 'cat',
+        pastExams: 'exam'
+      };
+
+      let assessmentDoc = null;
+      if (assessmentTypeMap[type]) {
+        assessmentDoc = await Assessment.findOne({ _id: id, type: assessmentTypeMap[type] });
+
+        if (!assessmentDoc) {
+          assessmentDoc = await Assessment.findOne({ unitId: id, type: assessmentTypeMap[type] })
+            .sort({ createdAt: -1 });
+        }
+      }
+
+      if (assessmentDoc) {
+        console.log('✅ Assessment resolved from Assessment collection');
+
+        foundAssessment = {
+          _id: assessmentDoc._id,
+          title: assessmentDoc.title,
+          description: assessmentDoc.description,
+          filename: assessmentDoc.imageFile?.filename,
+          filePath: assessmentDoc.imageFile?.filePath,
+          fileSize: assessmentDoc.imageFile?.fileSize,
+          totalMarks: assessmentDoc.totalMarks,
+          duration: assessmentDoc.duration,
+          dueDate: assessmentDoc.dueDate,
+          uploadDate: assessmentDoc.createdAt,
+          status: assessmentDoc.status,
+          instructions: assessmentDoc.instructions,
+          isPremium: true,
+          reviewNotes: null
+        };
+
+        assessmentType = type;
+        req.fallbackAssessmentDoc = assessmentDoc;
+
+        if (assessmentDoc.courseId) {
+          foundCourse = await Course.findById(assessmentDoc.courseId)
+            .populate('institution', 'name shortName code')
+            .lean();
+        }
+
+        if (!foundCourse && assessmentDoc.unitId) {
+          foundCourse = await Course.findOne({ 'units._id': assessmentDoc.unitId })
+            .populate('institution', 'name shortName code')
+            .lean();
+        }
+
+        if (foundCourse) {
+          foundUnit = foundCourse.units?.find(unit => unit._id.equals(assessmentDoc.unitId)) || null;
+        }
+      }
     }
 
     if (!foundAssessment) {
@@ -91,18 +158,26 @@ router.get('/:type/:id', auth, async (req, res) => {
     console.log(`✅ Found assessment: ${foundAssessment.title}`);
     console.log(`📁 Filename: ${foundAssessment.filename}`);
 
-    // Check if user has access (only approved assessments)
-    if (foundAssessment.status !== 'approved') {
-      console.log(`❌ Assessment not approved: status=${foundAssessment.status}`);
+    // Check if user has access (only approved/active assessments)
+    const allowedStatuses = ['approved', 'active', 'completed', 'scheduled', 'expired'];
+    if (foundAssessment.status && !allowedStatuses.includes(foundAssessment.status)) {
+      console.log(`❌ Assessment not available for secure viewing: status=${foundAssessment.status}`);
       return res.status(403).json({
         success: false,
-        message: 'Assessment not yet approved for viewing'
+        message: 'Assessment not available for secure viewing'
       });
     }
 
     // Construct file path
-    const uploadsDir = path.join(__dirname, '..', 'uploads');
-    const filePath = path.join(uploadsDir, 'assessments', foundAssessment.filename);
+    let filePath;
+    if (req.fallbackAssessmentDoc?.imageFile?.filePath) {
+      filePath = path.isAbsolute(req.fallbackAssessmentDoc.imageFile.filePath)
+        ? req.fallbackAssessmentDoc.imageFile.filePath
+        : path.join(__dirname, '..', req.fallbackAssessmentDoc.imageFile.filePath);
+    } else {
+      const uploadsDir = path.join(__dirname, '..', 'uploads');
+      filePath = path.join(uploadsDir, 'assessments', foundAssessment.filename);
+    }
     
     console.log(`📂 Looking for file at: ${filePath}`);
     console.log(`📂 File exists: ${fs.existsSync(filePath)}`);
@@ -260,6 +335,74 @@ router.get('/metadata/:type/:id', auth, async (req, res) => {
     }
 
     if (!foundAssessment) {
+      console.log(`ℹ️ Embedded assessment metadata not found, checking Assessment collection: ${type}/${id}`);
+
+      const assessmentTypeMap = {
+        cats: 'cat',
+        pastExams: 'pastExam',
+        assignments: 'assignment'
+      };
+
+      let assessmentDoc = null;
+      if (assessmentTypeMap[type]) {
+        assessmentDoc = await Assessment.findOne({ _id: id, type: assessmentTypeMap[type] })
+          .populate('courseId', 'name code')
+          .populate('unitId', 'unitName unitCode year semester');
+
+        if (!assessmentDoc) {
+          console.log(`❌ Assessment not found in Assessment collection: ${id}`);
+        } else {
+          console.log(`✅ Found assessment in Assessment collection: ${assessmentDoc.title}`);
+        }
+      }
+
+      if (assessmentDoc) {
+        let courseDoc = null;
+        if (assessmentDoc.courseId) {
+          courseDoc = await Course.findById(assessmentDoc.courseId)
+            .populate('institution', 'name shortName code')
+            .lean();
+        }
+
+        if (!courseDoc && assessmentDoc.unitId) {
+          courseDoc = await Course.findOne({ 'units._id': assessmentDoc.unitId })
+            .populate('institution', 'name shortName code')
+            .lean();
+        }
+
+        const unitDoc = courseDoc?.units?.find(unit => unit._id.equals(assessmentDoc.unitId));
+
+        return res.json({
+          success: true,
+          data: {
+            id: assessmentDoc._id,
+            title: assessmentDoc.title,
+            type,
+            course: courseDoc ? {
+              name: courseDoc.name,
+              code: courseDoc.code,
+              institution: courseDoc.institution?.name
+            } : undefined,
+            unitName: unitDoc?.unitName || assessmentDoc.unitName,
+            unitYear: unitDoc?.year,
+            unitSemester: unitDoc?.semester,
+            description: assessmentDoc.description,
+            totalMarks: assessmentDoc.totalMarks,
+            duration: assessmentDoc.duration,
+            instructions: assessmentDoc.instructions,
+            dueDate: assessmentDoc.dueDate,
+            uploadDate: assessmentDoc.createdAt,
+            hasFile: !!assessmentDoc.imageFile?.filename,
+            fileType: assessmentDoc.imageFile ? path.extname(assessmentDoc.imageFile.filename) : null,
+            status: assessmentDoc.status,
+            isPremium: true,
+            reviewNotes: null
+          }
+        });
+      }
+    }
+
+    if (!foundAssessment) {
       console.log(`❌ Assessment not found: ${type}/${id}`);
       return res.status(404).json({
         success: false,
@@ -269,13 +412,12 @@ router.get('/metadata/:type/:id', auth, async (req, res) => {
 
     console.log(`✅ Found assessment metadata: ${foundAssessment.title}`);
 
-    // Return real assessment metadata
     return res.json({
       success: true,
       data: {
         id: foundAssessment._id,
         title: foundAssessment.title,
-        type: type,
+        type,
         course: {
           name: foundCourse.name,
           code: foundCourse.code,

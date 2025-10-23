@@ -213,6 +213,35 @@ const ContentApproval = () => {
     setOpenPreviewDialog(true);
   };
 
+  const getSecureFileUrl = (filename) => {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      return null;
+    }
+
+    const separator = filename.includes('?') ? '&' : '?';
+    return `${backendUrl}/api/upload/file/${filename}${separator}token=${encodeURIComponent(token)}`;
+  };
+
+  const handleSecureDownload = (filename, openInNewTab = false) => {
+    const secureUrl = getSecureFileUrl(filename);
+    if (!secureUrl) {
+      setError('Your admin session has expired. Please log in again to access this file.');
+      return;
+    }
+
+    if (openInNewTab) {
+      window.open(secureUrl, '_blank', 'noopener,noreferrer');
+    } else {
+      const link = document.createElement('a');
+      link.href = secureUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  };
+
   const handleReview = (content, action) => {
     setSelectedContent(content);
     setReviewAction(action);
@@ -548,8 +577,8 @@ const ContentApproval = () => {
                 {/* Content Viewer */}
                 <Box sx={{ flex: 1, p: 2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   {previewContent.type === 'video' && (
-                    <Box sx={{ width: '100%' }}>
-                      <Typography variant="h6" color="text.secondary" gutterBottom sx={{ textAlign: 'center', mb: 2 }}>
+                    <Box sx={{ textAlign: 'center', width: '100%' }}>
+                      <Typography variant="h6" color="text.secondary" gutterBottom>
                         Video Preview: {previewContent.content.filename}
                       </Typography>
                       
@@ -597,15 +626,14 @@ const ContentApproval = () => {
                           🎥 Video streaming for content review • Duration: {previewContent.content.duration || 'Unknown'}
                         </Typography>
                         <Typography variant="caption" color="warning.main" sx={{ display: 'block', mb: 2 }}>
-                          ⚠️ Admin Preview Mode: Download option available for review purposes only
+                          ⚠️ Admin Review Mode: Downloads require active session and are logged.
                         </Typography>
-                        
+
                         {/* Admin-only download option */}
                         <Button
                           variant="outlined"
                           startIcon={<Download />}
-                          href={`${backendUrl}/api/upload/file/${previewContent.content.filename}`}
-                          download
+                          onClick={() => handleSecureDownload(previewContent.content.filename)}
                           size="small"
                           sx={{ mr: 1 }}
                         >
@@ -614,7 +642,7 @@ const ContentApproval = () => {
                         <Button
                           variant="outlined"
                           startIcon={<PlayArrow />}
-                          onClick={() => window.open(`${backendUrl}/api/upload/file/${previewContent.content.filename}`, '_blank')}
+                          onClick={() => handleSecureDownload(previewContent.content.filename, true)}
                           size="small"
                         >
                           Open in New Tab
@@ -636,8 +664,7 @@ const ContentApproval = () => {
                         <Button
                           variant="contained"
                           startIcon={<Visibility />}
-                          href={`${backendUrl}/api/upload/file/${previewContent.content.filename}`}
-                          target="_blank"
+                          onClick={() => handleSecureDownload(previewContent.content.filename, true)}
                           sx={{ mr: 1 }}
                         >
                           View PDF
@@ -645,29 +672,41 @@ const ContentApproval = () => {
                         <Button
                           variant="outlined"
                           startIcon={<Download />}
-                          href={`${backendUrl}/api/upload/file/${previewContent.content.filename}`}
-                          download
+                          onClick={() => handleSecureDownload(previewContent.content.filename)}
                         >
                           Download PDF
                         </Button>
                       </Box>
-                      {/* PDF Embed */}
-                      <Box sx={{ 
-                        width: '100%', 
-                        height: '400px', 
-                        border: 1, 
-                        borderColor: 'divider',
-                        borderRadius: 1,
-                        overflow: 'hidden'
-                      }}>
-                        <iframe
-                          src={`${backendUrl}/api/upload/file/${previewContent.content.filename}`}
-                          width="100%"
-                          height="100%"
-                          style={{ border: 'none' }}
-                          title="PDF Preview"
-                        />
-                      </Box>
+                      {(() => {
+                        const secureUrl = getSecureFileUrl(previewContent.content.filename);
+                        if (!secureUrl) {
+                          return (
+                            <Alert severity="warning" sx={{ mt: 2 }}>
+                              Admin authentication required to preview this document. Please log in again.
+                            </Alert>
+                          );
+                        }
+
+                        return (
+                          <Box sx={{ 
+                            width: '100%', 
+                            height: '400px', 
+                            border: 1, 
+                            borderColor: 'divider',
+                            borderRadius: 1,
+                            overflow: 'hidden'
+                          }}>
+                            <iframe
+                              key={secureUrl}
+                              src={secureUrl}
+                              width="100%"
+                              height="100%"
+                              style={{ border: 'none' }}
+                              title="PDF Preview"
+                            />
+                          </Box>
+                        );
+                      })()}
                     </Box>
                   )}
 
@@ -677,26 +716,23 @@ const ContentApproval = () => {
                       <Typography variant="h6" color="text.secondary" gutterBottom>
                         Assessment Preview
                       </Typography>
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                        {previewContent.content.filename}
-                      </Typography>
-                      <Button
-                        variant="contained"
-                        startIcon={<Visibility />}
-                        href={`${backendUrl}/api/upload/file/${previewContent.content.filename}`}
-                        target="_blank"
-                        sx={{ mr: 1 }}
-                      >
-                        View Image
-                      </Button>
-                      <Button
-                        variant="outlined"
-                        startIcon={<Download />}
-                        href={`${backendUrl}/api/upload/file/${previewContent.content.filename}`}
-                        download
-                      >
-                        Download
-                      </Button>
+                      <Box sx={{ mb: 2 }}>
+                        <Button
+                          variant="outlined"
+                          startIcon={<Visibility />}
+                          onClick={() => handleSecureDownload(previewContent.content.filename, true)}
+                          sx={{ mr: 1 }}
+                        >
+                          View File
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          startIcon={<Download />}
+                          onClick={() => handleSecureDownload(previewContent.content.filename)}
+                        >
+                          Download
+                        </Button>
+                      </Box>
                     </Box>
                   )}
                 </Box>

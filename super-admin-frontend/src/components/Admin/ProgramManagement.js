@@ -7,12 +7,6 @@ import {
   CardContent,
   Box,
   Button,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   Paper,
   Chip,
   CircularProgress,
@@ -29,28 +23,133 @@ import {
   Alert,
   Tabs,
   Tab,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemSecondaryAction
+  Stack
 } from '@mui/material';
-import {
-  Add,
-  Edit,
-  Delete,
-  ArrowBack,
-  School,
-  AccessTime,
-  ExpandMore,
-  MenuBook,
-  Settings
-} from '@mui/icons-material';
+import { Add, Edit, Delete, ArrowBack, School, AccessTime, MenuBook, Settings } from '@mui/icons-material';
+import CloseIcon from '@mui/icons-material/Close';
 import { motion } from 'framer-motion';
 import api from '../../utils/api';
 import UnitManagement from './UnitManagement';
+
+const toIntOrNull = (value) => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const parsed = Number.parseInt(trimmed, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+};
+
+const clampInt = (value, min, max, fallback) => {
+  const parsed = toIntOrNull(value);
+
+  if (parsed === null) {
+    return fallback;
+  }
+
+  if (typeof min === 'number' && parsed < min) {
+    return min;
+  }
+
+  if (typeof max === 'number' && parsed > max) {
+    return max;
+  }
+
+  return parsed;
+};
+
+const normalizeDuration = (duration = {}, scheduleType = 'semesters') => {
+  const years = clampInt(duration.years, 1, 6, 1);
+  const providedPeriods = scheduleType === 'terms'
+    ? duration.terms ?? duration.semesters
+    : duration.semesters ?? duration.terms;
+  const minPeriods = scheduleType === 'terms' ? 3 : 2;
+  const maxPeriods = 12;
+  const defaultPeriods = scheduleType === 'terms'
+    ? 3
+    : Math.max(2, Math.min(12, years * 2));
+  const periods = clampInt(
+    providedPeriods,
+    minPeriods,
+    maxPeriods,
+    defaultPeriods
+  );
+
+  return {
+    years,
+    semesters: periods,
+    terms: periods
+  };
+};
+
+const sanitizeStringArray = (values = []) => {
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => (typeof value === 'string' ? value.trim() : ''))
+        .filter(Boolean)
+    )
+  );
+};
+
+const sanitizeFees = (fees = {}) => {
+  const parseAmount = (amount) => {
+    if (amount === null || amount === undefined) {
+      return 0;
+    }
+
+    if (typeof amount === 'number') {
+      return Number.isFinite(amount) ? amount : 0;
+    }
+
+    if (typeof amount === 'string') {
+      const sanitized = amount.replace(/,/g, '').trim();
+      if (!sanitized) {
+        return 0;
+      }
+
+      const parsed = Number(sanitized);
+      return Number.isFinite(parsed) ? parsed : sanitized;
+    }
+
+    return 0;
+  };
+
+  return {
+    local: parseAmount(fees.local),
+    international: parseAmount(fees.international),
+    currency:
+      typeof fees.currency === 'string' && fees.currency.trim()
+        ? fees.currency.trim().toUpperCase()
+        : 'KSH'
+  };
+};
+
+const normalizeLevel = (level, allowedLevels) => {
+  if (typeof level !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = level.trim();
+  if (allowedLevels.includes(trimmed)) {
+    return trimmed;
+  }
+
+  if (trimmed.toLowerCase() === 'postgraduate') {
+    return 'Masters';
+  }
+
+  return undefined;
+};
 
 const ProgramManagement = ({ institution, userRole = 'super_admin', onBack }) => {
   const [programs, setPrograms] = useState([]);
@@ -65,25 +164,24 @@ const ProgramManagement = ({ institution, userRole = 'super_admin', onBack }) =>
     code: '',
     department: '',
     level: '',
-    duration: {
-      years: 1,
-      semesters: 2
-    },
+    scheduleType: 'semesters',
+    duration: normalizeDuration({ years: 1, semesters: 2 }, 'semesters'),
     description: '',
     entryRequirements: '',
     careerProspects: [],
+    subcourses: [],
     fees: {
       local: '',
       international: '',
       currency: 'KSH'
     }
   });
+  const [subcourseInput, setSubcourseInput] = useState('');
 
   const programLevels = [
     'Certificate',
     'Diploma',
     'Undergraduate',
-    'Postgraduate',
     'Masters',
     'PhD'
   ];
@@ -128,20 +226,20 @@ const ProgramManagement = ({ institution, userRole = 'super_admin', onBack }) =>
         name: program.name || '',
         code: program.code || '',
         department: program.department || '',
-        level: program.level || '',
-        duration: {
-          years: program.duration?.years || 1,
-          semesters: program.duration?.semesters || 2
-        },
+        level: normalizeLevel(program.level, programLevels) ?? '',
+        scheduleType: 'semesters',
+        duration: normalizeDuration(program.duration, 'semesters'),
         description: program.description || '',
         entryRequirements: program.entryRequirements || '',
-        careerProspects: program.careerProspects || [],
+        careerProspects: sanitizeStringArray(program.careerProspects),
+        subcourses: sanitizeStringArray(program.subcourses),
         fees: {
-          local: program.fees?.local || '',
-          international: program.fees?.international || '',
+          local: program.fees?.local ?? '',
+          international: program.fees?.international ?? '',
           currency: program.fees?.currency || 'KSH'
         }
       });
+      setSubcourseInput('');
     } else {
       setEditingProgram(null);
       setFormData({
@@ -149,12 +247,15 @@ const ProgramManagement = ({ institution, userRole = 'super_admin', onBack }) =>
         code: '',
         department: '',
         level: '',
-        duration: { years: 1, semesters: 2 },
+        scheduleType: 'semesters',
+        duration: normalizeDuration({ years: 1, semesters: 2 }, 'semesters'),
         description: '',
         entryRequirements: '',
         careerProspects: [],
+        subcourses: [],
         fees: { local: '', international: '', currency: 'KSH' }
       });
+      setSubcourseInput('');
     }
     setOpenDialog(true);
   };
@@ -162,23 +263,47 @@ const ProgramManagement = ({ institution, userRole = 'super_admin', onBack }) =>
   const handleCloseDialog = () => {
     setOpenDialog(false);
     setEditingProgram(null);
+    setSubcourseInput('');
   };
 
   const handleInputChange = (field, value, nested = null) => {
+    if (nested === 'duration') {
+      setFormData((prev) => ({
+        ...prev,
+        duration: normalizeDuration({
+          ...prev.duration,
+          [field]: value
+        }, prev.scheduleType)
+      }));
+      return;
+    }
+
+    if (nested === 'fees') {
+      setFormData((prev) => ({
+        ...prev,
+        fees: {
+          ...prev.fees,
+          [field]: value
+        }
+      }));
+      return;
+    }
+
     if (nested) {
-      setFormData(prev => ({
+      setFormData((prev) => ({
         ...prev,
         [nested]: {
           ...prev[nested],
           [field]: value
         }
       }));
-    } else {
-      setFormData(prev => ({
-        ...prev,
-        [field]: value
-      }));
+      return;
     }
+
+    setFormData((prev) => ({
+      ...prev,
+      [field]: value
+    }));
   };
 
   const handleCareerProspectsChange = (value) => {
@@ -189,8 +314,41 @@ const ProgramManagement = ({ institution, userRole = 'super_admin', onBack }) =>
     }));
   };
 
+  const handleAddSubcourse = () => {
+    const value = subcourseInput.trim();
+    if (!value) return;
+    setFormData(prev => {
+      const exists = prev.subcourses.some(
+        (item) => item.trim().toLowerCase() === value.toLowerCase()
+      );
+      if (exists) {
+        return prev;
+      }
+      return {
+        ...prev,
+        subcourses: [...prev.subcourses, value]
+      };
+    });
+    setSubcourseInput('');
+  };
+
+  const handleRemoveSubcourse = (value) => {
+    setFormData(prev => ({
+      ...prev,
+      subcourses: prev.subcourses.filter(sub => sub !== value)
+    }));
+  };
+
+  const handleSubcourseKeyDown = (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      handleAddSubcourse();
+    }
+  };
+
   const validateForm = () => {
     const errors = [];
+    const scheduleLabel = 'semesters';
     
     if (!formData.name || formData.name.trim().length < 2) {
       errors.push('Program name must be at least 2 characters');
@@ -213,9 +371,9 @@ const ProgramManagement = ({ institution, userRole = 'super_admin', onBack }) =>
     }
     
     if (!formData.duration.semesters || formData.duration.semesters < 2 || formData.duration.semesters > 12) {
-      errors.push('Duration semesters must be between 2 and 12');
+      errors.push(`Duration ${scheduleLabel} must be between 2 and 12`);
     }
-    
+
     return errors;
   };
 
@@ -228,10 +386,32 @@ const ProgramManagement = ({ institution, userRole = 'super_admin', onBack }) =>
         return;
       }
 
+      setError(null);
+
+      const sanitizedSubcourses = sanitizeStringArray(formData.subcourses);
+      const sanitizedCareerProspects = sanitizeStringArray(formData.careerProspects);
+      const normalizedScheduleType = 'semesters';
+      const normalizedDuration = normalizeDuration(formData.duration, normalizedScheduleType);
+      const normalizedLevel = normalizeLevel(formData.level, programLevels);
+      const sanitizedFees = sanitizeFees(formData.fees);
+
       const programData = {
-        ...formData,
+        name: formData.name.trim(),
+        code: formData.code.trim().toUpperCase(),
+        department: formData.department.trim(),
+        duration: normalizedDuration,
+        scheduleType: normalizedScheduleType,
+        description: formData.description.trim(),
+        entryRequirements: formData.entryRequirements.trim(),
+        careerProspects: sanitizedCareerProspects,
+        subcourses: sanitizedSubcourses,
+        fees: sanitizedFees,
         institution: institution._id
       };
+
+      if (normalizedLevel) {
+        programData.level = normalizedLevel;
+      }
 
       console.log('📤 Sending program data:', programData);
 
@@ -271,10 +451,6 @@ const ProgramManagement = ({ institution, userRole = 'super_admin', onBack }) =>
     }
   };
 
-  const handleTabChange = (event, newValue) => {
-    setTabValue(newValue);
-  };
-
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
@@ -284,307 +460,234 @@ const ProgramManagement = ({ institution, userRole = 'super_admin', onBack }) =>
   }
 
   return (
-    <Box>
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-      >
-        {/* Header */}
-        <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-          <IconButton onClick={onBack} sx={{ mr: 2 }}>
-            <ArrowBack />
-          </IconButton>
-          <Box sx={{ flexGrow: 1 }}>
-            <Typography variant="h5" component="h2" color="primary" sx={{ fontWeight: 600 }}>
-              Programs - {institution.name}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {institution.shortName} • {programs.length} programs
-            </Typography>
-          </Box>
-          <Button
-            variant="contained"
-            startIcon={<Add />}
-            onClick={() => handleOpenDialog()}
-            sx={{ borderRadius: 2 }}
-          >
-            Add Program
-          </Button>
-        </Box>
+    <Container sx={{ py: 4 }}>
+      <Box display="flex" alignItems="center" mb={3}>
+        <IconButton onClick={onBack} sx={{ mr: 2 }}>
+          <ArrowBack />
+        </IconButton>
+        <Typography variant="h4">Programs</Typography>
+        <Box flexGrow={1} />
+        <Button variant="contained" startIcon={<Add />} onClick={() => handleOpenDialog()}>
+          Add Program
+        </Button>
+      </Box>
 
-        {error && (
-          <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
-            {error}
-          </Alert>
-        )}
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
 
-        {/* Tabs */}
-        <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-          <Tabs value={tabValue} onChange={handleTabChange}>
-            <Tab label="All Programs" />
-            <Tab label="Unit Management" disabled={!selectedProgram} />
-          </Tabs>
-        </Box>
+      <Tabs value={tabValue} onChange={(event, value) => setTabValue(value)} sx={{ mb: 3 }}>
+        <Tab label="Programs" />
+        <Tab label="Unit Management" disabled={!selectedProgram} />
+      </Tabs>
 
-        {/* Tab Content */}
-        {tabValue === 0 && (
-          <Grid container spacing={3}>
-            {programs.length === 0 ? (
-              <Grid item xs={12}>
-                <Paper sx={{ p: 4, textAlign: 'center' }}>
-                  <School sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
-                  <Typography variant="h6" color="text.secondary" gutterBottom>
-                    No programs found
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                    Start by adding the first program for this institution.
-                  </Typography>
-                  <Button
-                    variant="contained"
-                    startIcon={<Add />}
-                    onClick={() => handleOpenDialog()}
-                  >
-                    Add First Program
-                  </Button>
-                </Paper>
-              </Grid>
-            ) : (
-              programs.map((program) => (
-                <Grid item xs={12} md={6} lg={4} key={program._id}>
-                  <motion.div
-                    whileHover={{ scale: 1.02 }}
-                    transition={{ duration: 0.2 }}
-                  >
-                    <Card sx={{ height: '100%' }}>
-                      <CardContent>
-                        <Typography variant="h6" sx={{ fontWeight: 600, mb: 1 }}>
-                          {program.name}
-                        </Typography>
-                        
-                        <Typography variant="body2" color="text.secondary" gutterBottom>
-                          {program.code} • {program.department}
-                        </Typography>
-                        
-                        <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap' }}>
-                          <Chip 
-                            label={program.level} 
-                            color="primary" 
-                            size="small"
-                          />
-                          <Chip 
-                            icon={<AccessTime />}
-                            label={`${program.duration?.years} Years`} 
-                            color="secondary" 
-                            size="small"
-                          />
-                          <Chip 
-                            icon={<MenuBook />}
-                            label={`${program.duration?.semesters} Semesters`} 
-                            color="info" 
-                            size="small"
-                          />
-                        </Box>
-                        
-                        <Typography variant="body2" sx={{ mb: 2, minHeight: 60 }}>
-                          {program.description?.substring(0, 120)}
-                          {program.description?.length > 120 && '...'}
-                        </Typography>
-                        
-                        {program.careerProspects && program.careerProspects.length > 0 && (
-                          <Box sx={{ mb: 2 }}>
-                            <Typography variant="caption" color="text.secondary">
-                              Career Prospects:
-                            </Typography>
-                            <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>
-                              {program.careerProspects.slice(0, 2).join(', ')}
-                              {program.careerProspects.length > 2 && '...'}
-                            </Typography>
-                          </Box>
-                        )}
-                        
-                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            startIcon={<Settings />}
-                            onClick={() => {
-                              setSelectedProgram(program);
-                              setTabValue(1);
-                            }}
-                          >
-                            Units
-                          </Button>
-                          
-                          <IconButton
-                            size="small"
-                            onClick={() => handleOpenDialog(program)}
-                            color="primary"
-                          >
-                            <Edit />
-                          </IconButton>
-                          
-                          <IconButton
-                            size="small"
-                            onClick={() => handleDelete(program._id)}
-                            color="error"
-                          >
-                            <Delete />
-                          </IconButton>
-                        </Box>
-                      </CardContent>
-                    </Card>
-                  </motion.div>
-                </Grid>
-              ))
-            )}
-          </Grid>
-        )}
-
-        {tabValue === 1 && selectedProgram && (
-          <UnitManagement 
-            program={selectedProgram}
-            institution={institution}
-            userRole={userRole}
-            onBack={() => setTabValue(0)}
-          />
-        )}
-
-        {/* Add/Edit Program Dialog */}
-        <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
-          <DialogTitle>
-            {editingProgram ? 'Edit Program' : 'Add New Program'}
-          </DialogTitle>
-          <DialogContent>
-            <Grid container spacing={2} sx={{ mt: 1 }}>
-              <Grid item xs={12} sm={8}>
-                <TextField
-                  fullWidth
-                  label="Program Name"
-                  value={formData.name}
-                  onChange={(e) => handleInputChange('name', e.target.value)}
-                  required
-                />
-              </Grid>
-              <Grid item xs={12} sm={4}>
-                <TextField
-                  fullWidth
-                  label="Program Code"
-                  value={formData.code}
-                  onChange={(e) => handleInputChange('code', e.target.value.toUpperCase())}
-                  required
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Department</InputLabel>
-                  <Select
-                    value={formData.department}
-                    onChange={(e) => handleInputChange('department', e.target.value)}
-                    label="Department"
-                  >
-                    {commonDepartments.map((dept) => (
-                      <MenuItem key={dept} value={dept}>
-                        {dept}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth required>
-                  <InputLabel>Level</InputLabel>
-                  <Select
-                    value={formData.level}
-                    onChange={(e) => handleInputChange('level', e.target.value)}
-                    label="Level"
-                  >
-                    {programLevels.map((level) => (
-                      <MenuItem key={level} value={level}>
-                        {level}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Duration (Years)"
-                  type="number"
-                  value={formData.duration.years}
-                  onChange={(e) => handleInputChange('years', parseInt(e.target.value), 'duration')}
-                  inputProps={{ min: 1, max: 6 }}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Duration (Semesters)"
-                  type="number"
-                  value={formData.duration.semesters}
-                  onChange={(e) => handleInputChange('semesters', parseInt(e.target.value), 'duration')}
-                  inputProps={{ min: 2, max: 12 }}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Description"
-                  multiline
-                  rows={3}
-                  value={formData.description}
-                  onChange={(e) => handleInputChange('description', e.target.value)}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Entry Requirements"
-                  multiline
-                  rows={2}
-                  value={formData.entryRequirements}
-                  onChange={(e) => handleInputChange('entryRequirements', e.target.value)}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  label="Career Prospects (comma-separated)"
-                  value={formData.careerProspects.join(', ')}
-                  onChange={(e) => handleCareerProspectsChange(e.target.value)}
-                  helperText="Enter career prospects separated by commas"
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="Local Student Fees"
-                  type="number"
-                  value={formData.fees.local}
-                  onChange={(e) => handleInputChange('local', e.target.value, 'fees')}
-                />
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  fullWidth
-                  label="International Student Fees"
-                  type="number"
-                  value={formData.fees.international}
-                  onChange={(e) => handleInputChange('international', e.target.value, 'fees')}
-                />
-              </Grid>
+      {tabValue === 0 && (
+        <Grid container spacing={3}>
+          {programs.length === 0 ? (
+            <Grid item xs={12}>
+              <Paper sx={{ p: 4, textAlign: 'center' }}>
+                <School sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
+                <Typography variant="h6" gutterBottom>
+                  No programs found
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Add your first program to get started.
+                </Typography>
+                <Button variant="contained" startIcon={<Add />} onClick={() => handleOpenDialog()}>
+                  Add Program
+                </Button>
+              </Paper>
             </Grid>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={handleCloseDialog}>Cancel</Button>
-            <Button onClick={handleSubmit} variant="contained">
-              {editingProgram ? 'Update' : 'Create'}
-            </Button>
-          </DialogActions>
-        </Dialog>
-      </motion.div>
-    </Box>
+          ) : (
+            programs.map((program) => {
+              const displayScheduleType = 'semesters';
+
+              return (
+                <Grid item xs={12} md={6} key={program._id}>
+                  <motion.div whileHover={{ scale: 1.02 }} transition={{ duration: 0.2 }}>
+                    <Card>
+                      <CardContent>
+                      <Typography variant="h6" sx={{ fontWeight: 600 }} gutterBottom>
+                        {program.name}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" gutterBottom>
+                        {[program.code, program.department].filter(Boolean).join(' • ')}
+                      </Typography>
+                      <Box display="flex" gap={1} flexWrap="wrap" mb={2}>
+                        {program.level && <Chip label={program.level} color="primary" size="small" />}
+                        {program.duration?.years && (
+                          <Chip
+                            icon={<AccessTime />}
+                            label={`${program.duration.years} Years`}
+                            color="secondary"
+                            size="small"
+                          />
+                        )}
+                        {program.duration?.semesters && (
+                          <Chip
+                            icon={<MenuBook />}
+                            label={`${program.duration.semesters} Semesters`}
+                            color="info"
+                            size="small"
+                          />
+                        )}
+                      </Box>
+                      <Typography variant="body2" sx={{ mb: 2, minHeight: 60 }}>
+                        {program.description?.substring(0, 120)}
+                        {program.description?.length > 120 && '...'}
+                      </Typography>
+                      <Box display="flex" gap={1} flexWrap="wrap">
+                        <Button
+                          variant="contained"
+                          size="small"
+                          startIcon={<Settings />}
+                          onClick={() => {
+                            setSelectedProgram(program);
+                            setTabValue(1);
+                          }}
+                        >
+                          Units
+                        </Button>
+                        <IconButton color="primary" size="small" onClick={() => handleOpenDialog(program)}>
+                          <Edit />
+                        </IconButton>
+                        <Button
+                          color="error"
+                          size="small"
+                          startIcon={<Delete />}
+                          onClick={() => handleDelete(program._id)}
+                        >
+                          Delete
+                        </Button>
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              </Grid>
+              );
+            })
+          )}
+        </Grid>
+      )}
+
+      {tabValue === 1 && selectedProgram && (
+        <UnitManagement program={selectedProgram} institution={institution} userRole={userRole} onBack={() => setTabValue(0)} />
+      )}
+
+      <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
+        <DialogTitle>{editingProgram ? 'Edit Program' : 'Add New Program'}</DialogTitle>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <TextField
+            label="Program Name"
+            value={formData.name}
+            onChange={(e) => handleInputChange('name', e.target.value)}
+            fullWidth
+            required
+          />
+          <TextField
+            label="Program Code"
+            value={formData.code}
+            onChange={(e) => handleInputChange('code', e.target.value.toUpperCase())}
+            fullWidth
+            required
+          />
+          <TextField
+            label="Department"
+            value={formData.department}
+            onChange={(e) => handleInputChange('department', e.target.value)}
+            fullWidth
+            required
+          />
+          <FormControl fullWidth>
+            <InputLabel>Program Level</InputLabel>
+            <Select
+              value={formData.level}
+              label="Program Level"
+              onChange={(e) => handleInputChange('level', e.target.value)}
+            >
+              {programLevels.map((level) => (
+                <MenuItem key={level} value={level}>
+                  {level}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <TextField
+            label="Duration (Years)"
+            type="number"
+            value={formData.duration.years}
+            onChange={(e) => handleInputChange('years', parseInt(e.target.value, 10) || 0, 'duration')}
+            fullWidth
+            required
+          />
+          <TextField
+            label="Duration (Semesters)"
+            type="number"
+            value={formData.duration.semesters}
+            onChange={(e) => handleInputChange('semesters', parseInt(e.target.value, 10) || 0, 'duration')}
+            fullWidth
+            required
+          />
+          <TextField
+            label="Description"
+            value={formData.description}
+            onChange={(e) => handleInputChange('description', e.target.value)}
+            fullWidth
+            multiline
+            minRows={3}
+          />
+          <TextField
+            label="Entry Requirements"
+            value={formData.entryRequirements}
+            onChange={(e) => handleInputChange('entryRequirements', e.target.value)}
+            fullWidth
+            multiline
+            minRows={2}
+          />
+          <TextField
+            label="Career Prospects (comma-separated)"
+            value={formData.careerProspects.join(', ')}
+            onChange={(e) => handleCareerProspectsChange(e.target.value)}
+            fullWidth
+          />
+          <Box>
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+              Subcourses
+            </Typography>
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 2 }}>
+              <TextField
+                label="Add Subcourse"
+                value={subcourseInput}
+                onChange={(e) => setSubcourseInput(e.target.value)}
+                onKeyDown={handleSubcourseKeyDown}
+                size="small"
+              />
+              <Button variant="outlined" startIcon={<Add />} onClick={handleAddSubcourse}>
+                Add
+              </Button>
+            </Stack>
+            <Stack direction="row" spacing={1} flexWrap="wrap">
+              {formData.subcourses.map((subcourse) => (
+                <Chip
+                  key={subcourse}
+                  label={subcourse}
+                  onDelete={() => handleRemoveSubcourse(subcourse)}
+                  deleteIcon={<CloseIcon />}
+                />
+              ))}
+            </Stack>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseDialog}>Cancel</Button>
+          <Button onClick={handleSubmit} variant="contained">
+            {editingProgram ? 'Update' : 'Create'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Container>
   );
 };
 

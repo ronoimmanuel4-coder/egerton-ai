@@ -14,21 +14,24 @@ require('dotenv').config();
 const app = express();
 const server = http.createServer(app);
 // Configure CORS for both Express and Socket.IO
-const allowedOrigins = [
+const defaultAllowedOrigins = [
   'https://admin.kibetronoh.com',
   'https://super.admin.kibetronoh.com',
   'https://kibetronoh.com',
   'https://eduvault-exms.onrender.com',
+  'https://68dc2615ba397bb2188ac9e7--warm-tiramisu-bf5ea3.netlify.app',
   'http://localhost:3000',
   'http://localhost:3001',
   'http://localhost:3002'
 ];
 
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim()).filter(Boolean)
+  : defaultAllowedOrigins;
+
 const io = socketIo(server, {
   cors: {
-    origin: process.env.NODE_ENV === 'production' 
-      ? allowedOrigins
-      : allowedOrigins,
+    origin: allowedOrigins,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true
   }
@@ -86,9 +89,15 @@ app.use(limiter);
 
 // CORS configuration - handle preflight requests
 const corsOptions = {
-  origin: process.env.NODE_ENV === 'production' 
-    ? process.env.FRONTEND_URL 
-    : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'],
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    if (process.env.NODE_ENV !== 'production' && origin.startsWith('http://localhost')) {
+      return callback(null, true);
+    }
+    return callback(new Error(`CORS policy disallows origin: ${origin}`));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
@@ -142,6 +151,7 @@ app.use('/api/institutions', require('./routes/institutions'));
 app.use('/api/courses', require('./routes/courses'));
 app.use('/api/resources', require('./routes/resources')); // Resources routes
 app.use('/api/upload', require('./routes/upload'));
+app.use('/api/payments', require('./routes/payments'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/admin', require('./routes/userManagement')); // User management routes
 app.use('/api/admin', require('./routes/adminAssessments')); // Admin assessments routes
@@ -150,8 +160,10 @@ app.use('/api', require('./routes/catsExams')); // CATs and Exams routes
 app.use('/api/content-approval', require('./routes/contentApproval'));
 app.use('/api/student', require('./routes/studentContent'));
 app.use('/api/subscription', require('./routes/subscription'));
+app.use('/api/student-downloads', require('./routes/studentDownloads'));
 app.use('/api/chatbot', require('./routes/chatbot'));
 app.use('/api/debug', require('./routes/debugContent')); // Debug content routes
+app.use('/api/public', require('./routes/public')); // Public routes (e.g., success stories)
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -195,12 +207,24 @@ app.get('/robots.txt', (req, res) => {
 
 // Serve uploaded files securely (only for authenticated users)
 app.use('/uploads', (req, res, next) => {
-  // Add basic security check for uploaded files
-  const token = req.header('Authorization')?.replace('Bearer ', '');
+  let token = req.header('Authorization')?.replace('Bearer ', '');
+  if (!token && req.query.token) {
+    token = req.query.token;
+  }
+
   if (!token) {
     return res.status(401).json({ message: 'Authentication required for file access' });
   }
-  next();
+
+  try {
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    console.error('Invalid token for static upload access:', error.message);
+    return res.status(401).json({ message: 'Invalid or expired token' });
+  }
 }, express.static(path.join(__dirname, 'uploads')));
 
 // 404 handler

@@ -26,6 +26,7 @@ import {
   Logout,
   Home,
   Person,
+  Download,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -61,7 +62,9 @@ const Navbar = () => {
 
   const navigationItems = [
     { label: 'Home', path: '/', icon: <Home />, public: true },
+    { label: 'About', path: '/about', icon: <Person />, public: true },
     { label: 'Resources', path: '/resources', icon: <School />, auth: true },
+    { label: 'Downloads', path: '/downloads', icon: <Download />, auth: true },
     { label: 'Jobs', path: '/jobs', icon: <Work />, auth: true },
   ];
 

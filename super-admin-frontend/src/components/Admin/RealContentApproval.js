@@ -18,7 +18,12 @@ import {
   Switch,
   Snackbar,
   Avatar,
-  Chip
+  Chip,
+  Stack,
+  Tabs,
+  Tab,
+  useTheme,
+  useMediaQuery
 } from '@mui/material';
 import {
   VideoLibrary,
@@ -32,55 +37,140 @@ import {
   PlayArrow,
   PictureAsPdf,
   Delete,
-  Warning
+  Warning,
+  Refresh,
+  Edit,
+  CheckCircle
 } from '@mui/icons-material';
 import api from '../../utils/api';
+
+const getBackendBaseUrl = () => {
+  const envUrl = process.env.REACT_APP_BACKEND_URL;
+  if (envUrl) {
+    return envUrl.endsWith('/') ? envUrl.slice(0, -1) : envUrl;
+  }
+  // Fallback to default dev URL
+  return 'http://localhost:5000';
+};
+
+const buildFileUrl = (pathOrUrl) => {
+  if (!pathOrUrl) return null;
+  if (/^https?:\/\//i.test(pathOrUrl)) {
+    return pathOrUrl;
+  }
+  const normalized = pathOrUrl.startsWith('/') ? pathOrUrl : `/${pathOrUrl}`;
+  return `${getBackendBaseUrl()}${normalized}`;
+};
 
 const RealContentApproval = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [pendingContent, setPendingContent] = useState([]);
+  const [approvedContent, setApprovedContent] = useState([]);
   const [stats, setStats] = useState({ pending: 0, approved: 0, rejected: 0 });
+  const [activeTab, setActiveTab] = useState('pending'); // 'pending' or 'approved'
   
   // Dialog states
   const [previewDialog, setPreviewDialog] = useState({ open: false, content: null });
   const [reviewDialog, setReviewDialog] = useState({ open: false, content: null, action: null });
   const [deleteDialog, setDeleteDialog] = useState({ open: false, content: null });
+  const [editDialog, setEditDialog] = useState({ open: false, content: null });
   const [reviewNotes, setReviewNotes] = useState('');
   const [isPremium, setIsPremium] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
 
   useEffect(() => {
     fetchPendingContent();
+    fetchApprovedContent();
   }, []);
 
-  const fetchPendingContent = async () => {
+  const transformPendingItems = (items = []) => {
+    return items.map((item) => {
+      const contentDetails = item.content || item.contentDetails || {};
+      const uploadDate = item.uploadDate
+        ? (typeof item.uploadDate === 'string' ? item.uploadDate : new Date(item.uploadDate).toISOString())
+        : null;
+
+      return {
+        type: item.type,
+        courseId: item.courseId,
+        courseName: item.courseName,
+        unitId: item.unitId,
+        unitName: item.unitName,
+        topicId: item.topicId,
+        topicTitle: item.topicTitle,
+        assessmentId: item.assessmentId,
+        content: {
+          ...contentDetails,
+          filename: contentDetails.filename || item.filename || contentDetails.originalName || null,
+          status: contentDetails.status || item.status,
+          uploadedBy: contentDetails.uploadedBy || item.uploadedBy || null,
+          reviewNotes: contentDetails.reviewNotes || item.reviewNotes || null
+        },
+        uploadDate,
+        uploaderName: item.uploaderName || contentDetails.uploaderName || 'Unknown uploader',
+        uploaderEmail: item.uploaderEmail || contentDetails.uploaderEmail || null
+      };
+    });
+  };
+
+  const fetchPendingContent = async ({ showSpinner = true } = {}) => {
     try {
-      setLoading(true);
+      if (showSpinner) {
+        setLoading(true);
+      }
       setError(null);
-      
-      const response = await api.get('/api/content-approval/pending');
-      const content = response.data.pendingContent || [];
-      
-      console.log('📋 Fetched pending content:', content);
-      setPendingContent(content);
+
+      const response = await api.get('/api/admin/content-status');
+      const allContent = response.data.content || [];
+
+      const pendingContentItems = transformPendingItems(
+        allContent.filter((item) => (item.status || 'pending').toLowerCase() === 'pending')
+      );
+
+      console.log('📋 Fetched pending content (unified):', pendingContentItems);
+      setPendingContent(pendingContentItems);
       setStats({
-        pending: content.length,
-        approved: 0,
-        rejected: 0
+        pending: pendingContentItems.length,
+        approved: response.data.stats?.approved || 0,
+        rejected: response.data.stats?.rejected || 0
       });
-      
-      if (content.length === 0) {
+
+      if (pendingContentItems.length === 0 && activeTab === 'pending') {
         setError('No pending content found. All content has been reviewed!');
       }
-      
+
     } catch (error) {
       console.error('Error fetching pending content:', error);
       setError('Failed to fetch pending content. Please check your connection.');
       setPendingContent([]);
       setStats({ pending: 0, approved: 0, rejected: 0 });
     } finally {
-      setLoading(false);
+      if (showSpinner) {
+        setLoading(false);
+      }
+    }
+  };
+
+  const fetchApprovedContent = async ({ showSpinner = true } = {}) => {
+    try {
+      if (showSpinner) {
+        setLoading(true);
+      }
+
+      const response = await api.get('/api/content-approval/approved');
+      const approvedItems = transformPendingItems(response.data.approvedContent || []);
+
+      console.log('✅ Fetched approved content:', approvedItems);
+      setApprovedContent(approvedItems);
+
+    } catch (error) {
+      console.error('Error fetching approved content:', error);
+      setApprovedContent([]);
+    } finally {
+      if (showSpinner) {
+        setLoading(false);
+      }
     }
   };
 
@@ -121,10 +211,10 @@ const RealContentApproval = () => {
   };
 
   const handleViewFile = (content) => {
-    const fileUrl = content.content?.filePath || content.content?.url;
+    const rawPath = content.content?.filePath || content.content?.url;
+    const fileUrl = buildFileUrl(rawPath);
     if (fileUrl) {
-      // Open file in new tab for viewing
-      window.open(`${process.env.REACT_APP_BACKEND_URL}${fileUrl}`, '_blank');
+      window.open(fileUrl, '_blank');
     } else {
       setSnackbar({
         open: true,
@@ -136,12 +226,13 @@ const RealContentApproval = () => {
 
   const handleDownloadFile = async (content) => {
     try {
-      const fileUrl = content.content?.filePath || content.content?.url;
+      const rawPath = content.content?.filePath || content.content?.url;
+      const fileUrl = buildFileUrl(rawPath);
       if (!fileUrl) {
         throw new Error('File URL not available');
       }
 
-      const response = await api.get(`${fileUrl}`, { responseType: 'blob' });
+      const response = await api.get(fileUrl, { responseType: 'blob' });
       const blob = new Blob([response.data]);
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -168,9 +259,12 @@ const RealContentApproval = () => {
   };
 
   const submitReview = async () => {
+    const { content, action } = reviewDialog;
+    if (!content || !action) {
+      return;
+    }
+
     try {
-      const { content, action } = reviewDialog;
-      
       const payload = {
         courseId: content.courseId,
         unitId: content.unitId,
@@ -178,81 +272,146 @@ const RealContentApproval = () => {
         assessmentId: content.assessmentId,
         contentType: content.type,
         reviewNotes,
-        ...(action === 'approve' && { isPremium })
+        ...(action === 'approve' ? { isPremium } : {})
       };
 
-      const endpoint = action === 'approve' ? '/api/content-approval/approve' : '/api/content-approval/reject';
-      await api.post(endpoint, payload);
-      
-      // Remove from pending list
-      setPendingContent(prev => prev.filter(c => 
-        c.topicId !== content.topicId && c.assessmentId !== content.assessmentId
-      ));
-      
-      // Update stats
-      setStats(prev => ({
-        ...prev,
-        pending: Math.max(0, prev.pending - 1),
-        [action === 'approve' ? 'approved' : 'rejected']: prev[action === 'approve' ? 'approved' : 'rejected'] + 1
-      }));
-      
+      const endpoint = action === 'approve'
+        ? '/api/content-approval/approve'
+        : '/api/content-approval/reject';
+      const response = await api.post(endpoint, payload);
+
+      if (response.data?.pendingContent) {
+        setPendingContent(transformPendingItems(response.data.pendingContent));
+      } else {
+        setPendingContent(prev => prev.filter(c =>
+          !(c.topicId === content.topicId && c.assessmentId === content.assessmentId)
+        ));
+      }
+
+      if (response.data?.stats) {
+        const updatedStats = response.data.stats;
+        setStats({
+          pending: updatedStats.pending ?? 0,
+          approved: updatedStats.approved ?? 0,
+          rejected: updatedStats.rejected ?? 0
+        });
+      } else {
+        setStats(prev => {
+          const next = {
+            ...prev,
+            pending: Math.max(0, prev.pending - 1)
+          };
+          const key = action === 'approve' ? 'approved' : 'rejected';
+          next[key] = (next[key] || 0) + 1;
+          return next;
+        });
+      }
+
+      await fetchPendingContent({ showSpinner: false });
+
       setSnackbar({
         open: true,
         message: `Content ${action}d successfully! ${isPremium && action === 'approve' ? '⭐ Marked as Premium' : ''}`,
         severity: 'success'
       });
-      
+
       setReviewDialog({ open: false, content: null, action: null });
-      
+      return;
     } catch (error) {
       console.error('Error submitting review:', error);
       setSnackbar({
         open: true,
-        message: `Failed to ${reviewDialog.action} content: ${error.response?.data?.message || error.message}`,
+        message: `Failed to ${action === 'approve' ? 'approve' : 'reject'} content: ${error.response?.data?.message || error.message}`,
+        severity: 'error'
+      });
+      await fetchPendingContent({ showSpinner: false });
+    }
+  };
+
+  const deleteContent = async () => {
+    const content = deleteDialog.content;
+    if (!content) {
+      return;
+    }
+
+    try {
+      const payload = {
+        courseId: content.courseId,
+        unitId: content.unitId,
+        contentType: content.type,
+        ...(content.topicId ? { topicId: content.topicId } : {}),
+        ...(content.assessmentId ? { assessmentId: content.assessmentId } : {})
+      };
+
+      console.log('🗑️ Deleting content:', payload);
+
+      const response = await api.delete('/api/content-approval/delete', {
+        data: payload
+      });
+
+      // Refresh both pending and approved content lists
+      await Promise.all([
+        fetchPendingContent({ showSpinner: false }),
+        fetchApprovedContent({ showSpinner: false })
+      ]);
+
+      setSnackbar({
+        open: true,
+        message: response.data?.message || 'Content deleted successfully!',
+        severity: 'success'
+      });
+
+      setDeleteDialog({ open: false, content: null });
+    } catch (error) {
+      console.error('Error deleting content:', error);
+      const errorMessage = error.response?.data?.message || error.message;
+      setSnackbar({
+        open: true,
+        message: `Failed to delete content: ${errorMessage}`,
         severity: 'error'
       });
     }
   };
 
-  const deleteContent = async () => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isTablet = useMediaQuery(theme.breakpoints.down('md'));
+
+  const handleEdit = (content) => {
+    setEditDialog({ open: true, content });
+    setIsPremium(content.content?.isPremium || false);
+  };
+
+  const submitEdit = async () => {
+    const content = editDialog.content;
+    if (!content) return;
+
     try {
-      const content = deleteDialog.content;
+      const payload = {
+        courseId: content.courseId,
+        unitId: content.unitId,
+        topicId: content.topicId,
+        assessmentId: content.assessmentId,
+        contentType: content.type,
+        isPremium
+      };
+
+      await api.post('/api/content-approval/approve', payload);
       
-      // Call delete API endpoint
-      await api.delete(`/api/content-approval/delete`, {
-        data: {
-          courseId: content.courseId,
-          unitId: content.unitId,
-          topicId: content.topicId,
-          assessmentId: content.assessmentId,
-          contentType: content.type
-        }
-      });
-      
-      // Remove from pending list
-      setPendingContent(prev => prev.filter(c => 
-        c.topicId !== content.topicId && c.assessmentId !== content.assessmentId
-      ));
-      
-      // Update stats
-      setStats(prev => ({
-        ...prev,
-        pending: Math.max(0, prev.pending - 1)
-      }));
+      await fetchApprovedContent({ showSpinner: false });
       
       setSnackbar({
         open: true,
-        message: 'Content deleted successfully from database',
+        message: 'Content updated successfully!',
         severity: 'success'
       });
-      
-      setDeleteDialog({ open: false, content: null });
-      
+
+      setEditDialog({ open: false, content: null });
     } catch (error) {
-      console.error('Error deleting content:', error);
+      console.error('Error updating content:', error);
       setSnackbar({
         open: true,
-        message: `Failed to delete content: ${error.response?.data?.message || error.message}`,
+        message: `Failed to update content: ${error.response?.data?.message || error.message}`,
         severity: 'error'
       });
     }
@@ -261,158 +420,333 @@ const RealContentApproval = () => {
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
-        <CircularProgress />
-        <Typography variant="h6" sx={{ ml: 2 }}>Loading pending content...</Typography>
+        <CircularProgress sx={{ color: 'primary.main' }} />
+        <Typography variant="h6" sx={{ ml: 2, color: 'text.primary' }}>Loading content...</Typography>
       </Box>
     );
   }
 
+  const currentContent = activeTab === 'pending' ? pendingContent : approvedContent;
+
   return (
-    <Container maxWidth="lg">
-      <Box sx={{ mb: 4 }}>
-        <Typography variant="h4" color="primary" sx={{ fontWeight: 600, mb: 2 }}>
-          📋 Content Approval
+    <Container maxWidth="xl" sx={{ py: { xs: 2, md: 4 } }}>
+      <Box sx={{ mb: { xs: 2, md: 4 } }}>
+        <Typography 
+          variant={isMobile ? "h5" : "h4"} 
+          sx={{ 
+            fontWeight: 700, 
+            mb: 2,
+            background: 'linear-gradient(45deg, #667eea 30%, #764ba2 90%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text'
+          }}
+        >
+          📋 Content Management
         </Typography>
-        <Typography variant="body1" color="text.secondary">
-          Review and approve content uploaded by mini admins
-        </Typography>
+        <Stack 
+          direction={{ xs: 'column', sm: 'row' }} 
+          spacing={2} 
+          alignItems={{ xs: 'stretch', sm: 'center' }}
+        >
+          <Typography variant="body1" color="text.secondary" sx={{ flexGrow: 1 }}>
+            Review, approve, and manage content uploaded by mini admins
+          </Typography>
+          <Button
+            variant="outlined"
+            startIcon={<Refresh />}
+            onClick={() => {
+              fetchPendingContent();
+              fetchApprovedContent();
+            }}
+            disabled={loading}
+            fullWidth={isMobile}
+            sx={{
+              borderRadius: 2,
+              textTransform: 'none',
+              fontWeight: 600
+            }}
+          >
+            Refresh
+          </Button>
+        </Stack>
       </Box>
 
       {/* Stats Cards */}
-      <Grid container spacing={3} sx={{ mb: 4 }}>
+      <Grid container spacing={{ xs: 2, md: 3 }} sx={{ mb: { xs: 3, md: 4 } }}>
         <Grid item xs={12} sm={4}>
-          <Card sx={{ bgcolor: 'warning.main', color: 'white' }}>
+          <Card sx={{ 
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            color: 'white',
+            transition: 'all 0.3s ease-in-out',
+            '&:hover': {
+              transform: 'translateY(-8px)',
+              boxShadow: '0 12px 24px rgba(102, 126, 234, 0.4)'
+            }
+          }}>
             <CardContent>
-              <Typography variant="h4" sx={{ fontWeight: 600, color: 'white' }}>
+              <Typography variant={isMobile ? "h5" : "h4"} sx={{ fontWeight: 700, color: 'white' }}>
                 {stats.pending}
               </Typography>
-              <Typography variant="body2" sx={{ color: 'white' }}>⏳ Pending Review</Typography>
+              <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.9)', fontWeight: 500 }}>⏳ Pending Review</Typography>
             </CardContent>
           </Card>
         </Grid>
         <Grid item xs={12} sm={4}>
-          <Card sx={{ bgcolor: 'success.main', color: 'white' }}>
+          <Card sx={{ 
+            background: 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)',
+            color: 'white',
+            transition: 'all 0.3s ease-in-out',
+            '&:hover': {
+              transform: 'translateY(-8px)',
+              boxShadow: '0 12px 24px rgba(56, 239, 125, 0.4)'
+            }
+          }}>
             <CardContent>
-              <Typography variant="h4" sx={{ fontWeight: 600, color: 'white' }}>
+              <Typography variant={isMobile ? "h5" : "h4"} sx={{ fontWeight: 700, color: 'white' }}>
                 {stats.approved}
               </Typography>
-              <Typography variant="body2" sx={{ color: 'white' }}>✅ Approved</Typography>
+              <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.9)', fontWeight: 500 }}>✅ Approved</Typography>
             </CardContent>
           </Card>
         </Grid>
         <Grid item xs={12} sm={4}>
-          <Card sx={{ bgcolor: 'error.main', color: 'white' }}>
+          <Card sx={{ 
+            background: 'linear-gradient(135deg, #ee0979 0%, #ff6a00 100%)',
+            color: 'white',
+            transition: 'all 0.3s ease-in-out',
+            '&:hover': {
+              transform: 'translateY(-8px)',
+              boxShadow: '0 12px 24px rgba(238, 9, 121, 0.4)'
+            }
+          }}>
             <CardContent>
-              <Typography variant="h4" sx={{ fontWeight: 600, color: 'white' }}>
+              <Typography variant={isMobile ? "h5" : "h4"} sx={{ fontWeight: 700, color: 'white' }}>
                 {stats.rejected}
               </Typography>
-              <Typography variant="body2" sx={{ color: 'white' }}>❌ Rejected</Typography>
+              <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.9)', fontWeight: 500 }}>❌ Rejected</Typography>
             </CardContent>
           </Card>
         </Grid>
       </Grid>
 
-      {error && (
+      {/* Tabs for Pending/Approved */}
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+        <Tabs 
+          value={activeTab} 
+          onChange={(e, newValue) => setActiveTab(newValue)}
+          variant={isMobile ? "fullWidth" : "standard"}
+          sx={{
+            '& .MuiTab-root': {
+              textTransform: 'none',
+              fontWeight: 600,
+              fontSize: { xs: '0.875rem', md: '1rem' }
+            }
+          }}
+        >
+          <Tab 
+            label={`Pending (${stats.pending})`} 
+            value="pending"
+            icon={<Warning />}
+            iconPosition="start"
+          />
+          <Tab 
+            label={`Approved (${stats.approved})`} 
+            value="approved"
+            icon={<CheckCircle />}
+            iconPosition="start"
+          />
+        </Tabs>
+      </Box>
+
+      {error && activeTab === 'pending' && (
         <Alert severity={pendingContent.length === 0 ? "info" : "error"} sx={{ mb: 3 }}>
           {error}
         </Alert>
       )}
 
-      {/* Pending Content List */}
-      <Grid container spacing={3}>
-        {pendingContent.map((content, index) => (
+      {/* Content List */}
+      <Grid container spacing={{ xs: 2, md: 3 }}>
+        {currentContent.map((content, index) => (
           <Grid item xs={12} key={`${content.courseId}_${content.unitId}_${content.topicId || content.assessmentId}_${index}`}>
-            <Card sx={{ border: 1, borderColor: 'divider' }}>
+            <Card sx={{ 
+              background: 'linear-gradient(145deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%)',
+              border: '1px solid',
+              borderColor: 'rgba(102, 126, 234, 0.2)',
+              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+              '&:hover': {
+                transform: 'translateY(-4px)',
+                boxShadow: '0 12px 32px rgba(102, 126, 234, 0.2)',
+                borderColor: 'primary.main'
+              }
+            }}>
               <CardContent>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <Stack 
+                  direction={{ xs: 'column', md: 'row' }} 
+                  spacing={2} 
+                  alignItems={{ xs: 'flex-start', md: 'center' }}
+                >
                   <Avatar sx={{ 
                     bgcolor: `${getContentColor(content.type)}.main`,
-                    color: 'white'
+                    width: { xs: 48, md: 56 },
+                    height: { xs: 48, md: 56 }
                   }}>
                     {getContentIcon(content.type)}
                   </Avatar>
-                  <Box sx={{ flexGrow: 1 }}>
-                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                  
+                  <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                    <Typography 
+                      variant={isMobile ? "subtitle1" : "h6"} 
+                      sx={{ fontWeight: 600, mb: 1 }}
+                    >
                       {content.topicTitle || content.content?.title || `${content.type.toUpperCase()} Content`}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      📚 Course: {content.courseName}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      📖 Unit: {content.unitName}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      📁 File: {content.content?.filename || content.content?.originalName || 'Unknown file'}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      👤 Uploaded by: {content.content?.uploadedBy || 'Unknown'}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      📅 Upload date: {new Date(content.uploadDate).toLocaleDateString()}
-                    </Typography>
+                    
+                    <Stack spacing={0.5}>
+                      <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        📚 <strong>Course:</strong> {content.courseName}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        📖 <strong>Unit:</strong> {content.unitName}
+                      </Typography>
+                      <Typography 
+                        variant="body2" 
+                        color="text.secondary" 
+                        sx={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          gap: 0.5,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}
+                      >
+                        📁 <strong>File:</strong> {content.content?.filename || content.content?.originalName || 'Unknown file'}
+                      </Typography>
+                      {!isMobile && (
+                        <>
+                          <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                            👤 <strong>Uploaded by:</strong> {content.uploaderName || 'Unknown'}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                            📅 <strong>Date:</strong> {new Date(content.uploadDate).toLocaleDateString()}
+                          </Typography>
+                        </>
+                      )}
+                    </Stack>
+                    
+                    {content.content?.isPremium && (
+                      <Chip 
+                        icon={<Star />}
+                        label="Premium" 
+                        color="warning"
+                        size="small"
+                        sx={{ mt: 1 }}
+                      />
+                    )}
                   </Box>
-                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                  
+                  <Stack 
+                    direction={{ xs: 'row', md: 'column' }} 
+                    spacing={1} 
+                    sx={{ 
+                      width: { xs: '100%', md: 'auto' },
+                      flexWrap: { xs: 'wrap', md: 'nowrap' }
+                    }}
+                  >
                     <Chip 
                       label={content.type.toUpperCase()} 
                       color={getContentColor(content.type)}
                       size="small"
+                      sx={{ display: { xs: 'none', md: 'flex' } }}
                     />
+                    
                     <Button
                       size="small"
                       variant="outlined"
                       startIcon={<Visibility />}
                       onClick={() => handlePreview(content)}
+                      fullWidth={isMobile}
+                      sx={{ textTransform: 'none' }}
                     >
-                      Preview
+                      {isMobile ? 'View' : 'Preview'}
                     </Button>
-                    <Button
-                      size="small"
-                      variant="contained"
-                      color="success"
-                      startIcon={<Check />}
-                      onClick={() => handleReview(content, 'approve')}
-                    >
-                      Approve
-                    </Button>
-                    <Button
-                      size="small"
-                      variant="contained"
-                      color="error"
-                      startIcon={<Close />}
-                      onClick={() => handleReview(content, 'reject')}
-                    >
-                      Reject
-                    </Button>
+                    
+                    {activeTab === 'pending' ? (
+                      <>
+                        <Button
+                          size="small"
+                          variant="contained"
+                          color="success"
+                          startIcon={<Check />}
+                          onClick={() => handleReview(content, 'approve')}
+                          fullWidth={isMobile}
+                          sx={{ textTransform: 'none' }}
+                        >
+                          Approve
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="contained"
+                          color="error"
+                          startIcon={<Close />}
+                          onClick={() => handleReview(content, 'reject')}
+                          fullWidth={isMobile}
+                          sx={{ textTransform: 'none' }}
+                        >
+                          Reject
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        color="primary"
+                        startIcon={<Edit />}
+                        onClick={() => handleEdit(content)}
+                        fullWidth={isMobile}
+                        sx={{ textTransform: 'none' }}
+                      >
+                        Edit
+                      </Button>
+                    )}
+                    
                     <Button
                       size="small"
                       variant="outlined"
                       color="error"
                       startIcon={<Delete />}
                       onClick={() => handleDelete(content)}
-                      sx={{ ml: 1 }}
+                      fullWidth={isMobile}
+                      sx={{ textTransform: 'none' }}
                     >
                       Delete
                     </Button>
-                  </Box>
-                </Box>
+                  </Stack>
+                </Stack>
               </CardContent>
             </Card>
           </Grid>
         ))}
       </Grid>
 
-      {pendingContent.length === 0 && !loading && (
-        <Box sx={{ textAlign: 'center', py: 8 }}>
-          <Typography variant="h5" color="text.secondary" gutterBottom>
-            🎉 All caught up!
+      {currentContent.length === 0 && !loading && (
+        <Box sx={{ textAlign: 'center', py: { xs: 6, md: 8 } }}>
+          <Typography variant={isMobile ? "h6" : "h5"} color="text.secondary" gutterBottom>
+            {activeTab === 'pending' ? '🎉 All caught up!' : '📋 No approved content yet'}
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            No pending content to review at the moment.
+            {activeTab === 'pending' 
+              ? 'No pending content to review at the moment.' 
+              : 'Approved content will appear here.'}
           </Typography>
           <Button 
             variant="outlined" 
-            onClick={fetchPendingContent}
-            sx={{ mt: 2 }}
+            onClick={() => {
+              fetchPendingContent();
+              fetchApprovedContent();
+            }}
+            sx={{ mt: 2, textTransform: 'none' }}
           >
             Refresh
           </Button>
@@ -463,7 +797,7 @@ const RealContentApproval = () => {
                 overflow: 'auto'
               }}>
                 <img 
-                  src={`${process.env.REACT_APP_BACKEND_URL}${previewDialog.content.content.filePath}`}
+                  src={buildFileUrl(previewDialog.content.content.filePath)}
                   alt="Assessment Preview" 
                   style={{ 
                     maxWidth: '100%', 
@@ -665,6 +999,57 @@ const RealContentApproval = () => {
             startIcon={<Delete />}
           >
             Delete Permanently
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Edit Dialog for Approved Content */}
+      <Dialog 
+        open={editDialog.open} 
+        onClose={() => setEditDialog({ open: false, content: null })}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          Edit Content Settings
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="subtitle2" gutterBottom>
+            Content: {editDialog.content?.topicTitle || editDialog.content?.content?.title}
+          </Typography>
+          
+          <FormControlLabel
+            control={
+              <Switch 
+                checked={isPremium} 
+                onChange={(e) => setIsPremium(e.target.checked)}
+                color="warning"
+              />
+            }
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Star color={isPremium ? 'warning' : 'disabled'} />
+                <Typography>Mark as Premium Content</Typography>
+              </Box>
+            }
+            sx={{ mt: 2 }}
+          />
+          
+          <Alert severity="info" sx={{ mt: 2 }}>
+            💡 Premium content requires students to have an active subscription to access.
+          </Alert>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditDialog({ open: false, content: null })}>
+            Cancel
+          </Button>
+          <Button 
+            variant="contained"
+            color="primary"
+            onClick={submitEdit}
+            startIcon={<Check />}
+          >
+            Save Changes
           </Button>
         </DialogActions>
       </Dialog>

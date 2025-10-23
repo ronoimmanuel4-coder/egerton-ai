@@ -18,6 +18,10 @@ import { useAuth } from './contexts/AuthContext';
 import {
   LazyLoginPage,
   LazyAdminDashboard,
+  LazyVideoManagement,
+  LazyNotesManagement,
+  LazyCATManagement,
+  LazyExamManagement,
   PageLoader
 } from './utils/lazyComponents';
 
@@ -167,17 +171,45 @@ function App() {
                   <Suspense fallback={<PageLoader />}>
                     <Routes>
                       {/* Public Routes */}
-                      <Route path="/" element={<Navigate to="/admin" replace />} />
                       <Route path="/login" element={<LazyLoginPage />} />
                       <Route path="/test-login" element={<TestLoginPage />} />
                       
                       {/* Admin Routes */}
                       <Route path="/admin" element={
-                        <ProtectedRoute requiredRole="mini_admin">
+                        <ProtectedRoute requiredRole={[ 'mini_admin', 'super_admin' ]}>
+                          <LazyAdminDashboard />
+                        </ProtectedRoute>
+                      } />
+
+                      {/* Super Admin explicit route (same dashboard) */}
+                      <Route path="/super-admin" element={
+                        <ProtectedRoute requiredRole="super_admin">
                           <LazyAdminDashboard />
                         </ProtectedRoute>
                       } />
                       
+                      {/* Resource Management */}
+                      <Route path="/admin/videos" element={
+                        <ProtectedRoute requiredRole={[ 'mini_admin', 'super_admin' ]}>
+                          <LazyVideoManagement />
+                        </ProtectedRoute>
+                      } />
+                      <Route path="/admin/notes" element={
+                        <ProtectedRoute requiredRole={[ 'mini_admin', 'super_admin' ]}>
+                          <LazyNotesManagement />
+                        </ProtectedRoute>
+                      } />
+                      <Route path="/admin/cats" element={
+                        <ProtectedRoute requiredRole={[ 'mini_admin', 'super_admin' ]}>
+                          <LazyCATManagement />
+                        </ProtectedRoute>
+                      } />
+                      <Route path="/admin/exams" element={
+                        <ProtectedRoute requiredRole={[ 'mini_admin', 'super_admin' ]}>
+                          <LazyExamManagement />
+                        </ProtectedRoute>
+                      } />
+
                       {/* Catch all route */}
                       <Route path="*" element={<Navigate to="/admin" replace />} />
                     </Routes>

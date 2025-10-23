@@ -65,6 +65,13 @@ const Navbar = () => {
     { label: 'Jobs', path: '/jobs', icon: <Work />, auth: true },
   ];
 
+  const resourceItems = [
+    { label: 'Videos', path: '/admin/videos' },
+    { label: 'Notes', path: '/admin/notes' },
+    { label: 'CATs', path: '/admin/cats' },
+    { label: 'Exams', path: '/admin/exams' }
+  ];
+
   const adminItems = [
     { label: 'Admin Dashboard', path: '/admin', roles: ['mini_admin', 'super_admin'] },
     { label: 'Super Admin', path: '/super-admin', roles: ['super_admin'] },

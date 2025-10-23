@@ -169,13 +169,25 @@ router.post('/login', [
 // @access  Private
 router.get('/me', auth, async (req, res) => {
   try {
-    res.json({ 
+    const user = await User.findById(req.user.id).select('-password');
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.json({
       user: {
-        id: 'demo-user',
-        email: 'demo@example.com',
-        firstName: 'Demo',
-        lastName: 'User',
-        role: 'student'
+        id: user._id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+        phoneNumber: user.phoneNumber,
+        institution: user.institution,
+        course: user.course,
+        yearOfStudy: user.yearOfStudy,
+        subscription: user.subscription,
+        lastLogin: user.lastLogin
       }
     });
   } catch (error) {

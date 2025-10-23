@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Container,
   Typography,
@@ -20,7 +20,23 @@ import {
   IconButton,
   Menu,
   MenuItem,
-  Divider
+  Divider,
+  Stack,
+  LinearProgress,
+  ToggleButton,
+  ToggleButtonGroup,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  Tooltip,
+  FormControl,
+  InputLabel,
+  Select,
+  InputAdornment
 } from '@mui/material';
 import {
   VideoLibrary,
@@ -35,15 +51,74 @@ import {
   PictureAsPdf,
   Warning,
   Star,
-  StarBorder
+  StarBorder,
+  FilterList,
+  ViewModule,
+  TableRows,
+  CheckCircleOutline,
+  School,
+  Search as SearchIcon
 } from '@mui/icons-material';
 import api from '../../utils/api';
+
+const categoryMeta = {
+  all: { label: 'All content', icon: <CheckCircleOutline fontSize="small" />, color: 'primary' },
+  video: { label: 'Lecture videos', icon: <VideoLibrary fontSize="small" />, color: 'error' },
+  notes: { label: 'Lecture notes', icon: <Description fontSize="small" />, color: 'primary' },
+  assessments: { label: 'Assessments', icon: <Assessment fontSize="small" />, color: 'warning' },
+  premium: { label: 'Premium only', icon: <Star fontSize="small" />, color: 'warning' }
+};
+
+const flattenContentRecord = (content) => {
+  const base = content.content || {};
+  return {
+    id: `${content.courseId}_${content.unitId}_${content.topicId || content.assessmentId}`,
+    courseName: content.courseName || 'Unknown course',
+    unitName: content.unitName || 'Unknown unit',
+    topicTitle: content.topicTitle || base.title || `${content.type?.toUpperCase?.() || 'CONTENT'}`,
+    filename: base.filename || base.originalName || base.filePath?.split('/').pop() || 'Unnamed file',
+    type: content.type || 'notes',
+    isPremium: Boolean(base.isPremium),
+    lastReviewedAt: base.reviewDate || content.uploadDate || base.updatedAt || base.createdAt,
+    size: base.size || null,
+    extension: base.extension || base.mimeType || null,
+    reviewer: base.reviewedBy || content.reviewer || 'System',
+    raw: content
+  };
+};
+
+const formatDateTime = (value) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '—';
+  }
+  return date.toLocaleString('en-KE', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+
+const formatFileSize = (bytes) => {
+  if (!bytes) {
+    return '—';
+  }
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = (bytes / Math.pow(1024, index)).toFixed(1);
+  return `${value} ${units[index]}`;
+};
 
 const ApprovedContentManagement = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [approvedContent, setApprovedContent] = useState([]);
-  const [stats, setStats] = useState({ approved: 0, premium: 0, total: 0 });
+  const [searchTerm, setSearchTerm] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [institutionFilter, setInstitutionFilter] = useState('all');
+  const [viewMode, setViewMode] = useState('grid');
   
   // Dialog states
   const [previewDialog, setPreviewDialog] = useState({ open: false, content: null });
@@ -52,6 +127,53 @@ const ApprovedContentManagement = () => {
   const [menuAnchor, setMenuAnchor] = useState(null);
   const [selectedContent, setSelectedContent] = useState(null);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+
+  const normalizedContent = useMemo(() => approvedContent.map(flattenContentRecord), [approvedContent]);
+
+  const stats = useMemo(() => {
+    const total = normalizedContent.length;
+    const premium = normalizedContent.filter((item) => item.isPremium).length;
+    const video = normalizedContent.filter((item) => item.type === 'video').length;
+    const notes = normalizedContent.filter((item) => item.type === 'notes').length;
+    const assessments = normalizedContent.filter((item) => ['cats', 'assignments', 'pastExams', 'assessments', 'assessment'].includes(item.type)).length;
+    return { total, premium, video, notes, assessments };
+  }, [normalizedContent]);
+
+  const institutionOptions = useMemo(() => {
+    const set = new Set(normalizedContent.map((item) => item.raw?.institutionName || item.raw?.institution?.name).filter(Boolean));
+    return ['all', ...Array.from(set).sort((a, b) => a.localeCompare(b))];
+  }, [normalizedContent]);
+
+  const filteredContent = useMemo(() => {
+    return normalizedContent.filter((item) => {
+      const matchesSearch = searchTerm.trim().length === 0 || [
+        item.topicTitle,
+        item.courseName,
+        item.unitName,
+        item.filename
+      ].some((value) => value?.toLowerCase().includes(searchTerm.trim().toLowerCase()));
+
+      const matchesCategory = (() => {
+        switch (categoryFilter) {
+          case 'video':
+            return item.type === 'video';
+          case 'notes':
+            return item.type === 'notes';
+          case 'assessments':
+            return ['cats', 'assignments', 'pastExams', 'assessments', 'assessment'].includes(item.type);
+          case 'premium':
+            return item.isPremium;
+          default:
+            return true;
+        }
+      })();
+
+      const institutionName = item.raw?.institutionName || item.raw?.institution?.name || 'unknown';
+      const matchesInstitution = institutionFilter === 'all' || institutionName === institutionFilter;
+
+      return matchesSearch && matchesCategory && matchesInstitution;
+    });
+  }, [normalizedContent, searchTerm, categoryFilter, institutionFilter]);
 
   useEffect(() => {
     fetchApprovedContent();
@@ -69,14 +191,6 @@ const ApprovedContentManagement = () => {
       console.log('📋 Fetched approved content:', content);
       setApprovedContent(content);
       
-      // Calculate stats
-      const premiumCount = content.filter(c => c.content?.isPremium).length;
-      setStats({
-        approved: content.length,
-        premium: premiumCount,
-        total: content.length
-      });
-      
       if (content.length === 0) {
         setError('No approved content found.');
       }
@@ -85,7 +199,6 @@ const ApprovedContentManagement = () => {
       console.error('Error fetching approved content:', error);
       setError('Failed to fetch approved content. Please check your connection.');
       setApprovedContent([]);
-      setStats({ approved: 0, premium: 0, total: 0 });
     } finally {
       setLoading(false);
     }
@@ -204,12 +317,6 @@ const ApprovedContentManagement = () => {
           : c
       ));
 
-      // Update stats
-      setStats(prev => ({
-        ...prev,
-        premium: newPremiumStatus ? prev.premium + 1 : prev.premium - 1
-      }));
-
       setSnackbar({
         open: true,
         message: `Content ${newPremiumStatus ? 'marked as premium' : 'removed from premium'}`,
@@ -245,14 +352,6 @@ const ApprovedContentManagement = () => {
         c.topicId !== content.topicId && c.assessmentId !== content.assessmentId
       ));
       
-      // Update stats
-      setStats(prev => ({
-        ...prev,
-        approved: Math.max(0, prev.approved - 1),
-        premium: content.content?.isPremium ? Math.max(0, prev.premium - 1) : prev.premium,
-        total: Math.max(0, prev.total - 1)
-      }));
-      
       setSnackbar({
         open: true,
         message: 'Content deleted successfully from database',
@@ -281,128 +380,276 @@ const ApprovedContentManagement = () => {
   }
 
   return (
-    <Container maxWidth="lg">
-      <Box sx={{ mb: 4 }}>
-        <Typography variant="h4" color="primary" sx={{ fontWeight: 600, mb: 2 }}>
-          📚 Approved Content Management
-        </Typography>
-        <Typography variant="body1" color="text.secondary">
-          View, edit, and manage all approved educational content
-        </Typography>
-      </Box>
+    <Container maxWidth="xl">
+      <Stack spacing={3}>
+        <Stack spacing={1.5}>
+          <Typography variant="h4" sx={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 1 }}>
+            <CheckCircleOutline color="success" /> Approved Content Library
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            Track the health of published assets, curate premium experiences, and keep institutions stocked with up-to-date materials.
+          </Typography>
+        </Stack>
 
-      {/* Stats Cards */}
-      <Grid container spacing={3} sx={{ mb: 4 }}>
-        <Grid item xs={12} sm={4}>
-          <Card sx={{ bgcolor: 'success.main', color: 'white' }}>
-            <CardContent>
-              <Typography variant="h4" sx={{ fontWeight: 600, color: 'white' }}>
-                {stats.approved}
-              </Typography>
-              <Typography variant="body2" sx={{ color: 'white' }}>✅ Approved Content</Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={12} sm={4}>
-          <Card sx={{ bgcolor: 'warning.main', color: 'white' }}>
-            <CardContent>
-              <Typography variant="h4" sx={{ fontWeight: 600, color: 'white' }}>
-                {stats.premium}
-              </Typography>
-              <Typography variant="body2" sx={{ color: 'white' }}>⭐ Premium Content</Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid item xs={12} sm={4}>
-          <Card sx={{ bgcolor: 'info.main', color: 'white' }}>
-            <CardContent>
-              <Typography variant="h4" sx={{ fontWeight: 600, color: 'white' }}>
-                {stats.total}
-              </Typography>
-              <Typography variant="body2" sx={{ color: 'white' }}>📊 Total Content</Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
-
-      {error && (
-        <Alert severity={approvedContent.length === 0 ? "info" : "error"} sx={{ mb: 3 }}>
-          {error}
-        </Alert>
-      )}
-
-      {/* Approved Content List */}
-      <Grid container spacing={3}>
-        {approvedContent.map((content, index) => (
-          <Grid item xs={12} key={`${content.courseId}_${content.unitId}_${content.topicId || content.assessmentId}_${index}`}>
-            <Card sx={{ border: 1, borderColor: 'divider' }}>
+        <Grid container spacing={2}>
+          <Grid item xs={12} md={3}>
+            <Card>
               <CardContent>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                  <Avatar sx={{ 
-                    bgcolor: `${getContentColor(content.type)}.main`,
-                    color: 'white'
-                  }}>
-                    {getContentIcon(content.type)}
-                  </Avatar>
-                  <Box sx={{ flexGrow: 1 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                      <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                        {content.topicTitle || content.content?.title || `${content.type.toUpperCase()} Content`}
-                      </Typography>
-                      {content.content?.isPremium && (
-                        <Star color="warning" sx={{ fontSize: 20 }} />
-                      )}
-                    </Box>
-                    <Typography variant="body2" color="text.secondary">
-                      📚 Course: {content.courseName}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      📖 Unit: {content.unitName}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      📁 File: {content.content?.filename || content.content?.originalName || 'Unknown file'}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      📅 Approved: {new Date(content.content?.reviewDate || content.uploadDate).toLocaleDateString()}
-                    </Typography>
-                  </Box>
-                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                    <Chip 
-                      label={content.type.toUpperCase()} 
-                      color={getContentColor(content.type)}
-                      size="small"
-                    />
-                    <IconButton
-                      onClick={(e) => handleMenuOpen(e, content)}
-                      size="small"
-                    >
-                      <MoreVert />
-                    </IconButton>
-                  </Box>
-                </Box>
+                <Stack spacing={0.5}>
+                  <Typography variant="caption" color="text.secondary">Total Published</Typography>
+                  <Typography variant="h4" sx={{ fontWeight: 700 }}>{stats.total}</Typography>
+                  <Chip size="small" color="success" icon={<CheckCircleOutline fontSize="small" />} label="Live in catalog" />
+                </Stack>
               </CardContent>
             </Card>
           </Grid>
-        ))}
-      </Grid>
+          <Grid item xs={12} md={3}>
+            <Card>
+              <CardContent>
+                <Stack spacing={0.5}>
+                  <Typography variant="caption" color="text.secondary">Premium Experiences</Typography>
+                  <Typography variant="h4" sx={{ fontWeight: 700 }}>{stats.premium}</Typography>
+                  <Chip size="small" color="warning" icon={<Star fontSize="small" />} label="Member exclusives" />
+                </Stack>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid item xs={12} md={3}>
+            <Card>
+              <CardContent>
+                <Stack spacing={0.5}>
+                  <Typography variant="caption" color="text.secondary">Video Lessons</Typography>
+                  <Typography variant="h4" sx={{ fontWeight: 700 }}>{stats.video}</Typography>
+                  <Chip size="small" color="error" icon={<VideoLibrary fontSize="small" />} label="Lecture videos" />
+                </Stack>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid item xs={12} md={3}>
+            <Card>
+              <CardContent>
+                <Stack spacing={0.5}>
+                  <Typography variant="caption" color="text.secondary">Assessments & Notes</Typography>
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <Typography variant="h4" sx={{ fontWeight: 700 }}>{stats.assessments}</Typography>
+                    <Chip size="small" icon={<Assessment fontSize="small" />} label={`${stats.notes} notes`} />
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary">Assessments include CATs, assignments, exams.</Typography>
+                </Stack>
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
 
-      {approvedContent.length === 0 && !loading && (
-        <Box sx={{ textAlign: 'center', py: 8 }}>
-          <Typography variant="h5" color="text.secondary" gutterBottom>
-            📭 No approved content found
-          </Typography>
-          <Typography variant="body1" color="text.secondary">
-            Content will appear here once it has been approved.
-          </Typography>
-          <Button 
-            variant="outlined" 
-            onClick={fetchApprovedContent}
-            sx={{ mt: 2 }}
-          >
-            Refresh
-          </Button>
-        </Box>
-      )}
+        <Card>
+          <CardContent>
+            <Stack spacing={2}>
+              <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'flex-start', lg: 'center' }}>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'center' }} sx={{ width: '100%' }}>
+                  <TextField
+                    fullWidth
+                    placeholder="Search title, course, unit, or filename"
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <SearchIcon fontSize="small" />
+                        </InputAdornment>
+                      )
+                    }}
+                  />
+                  <ToggleButtonGroup
+                    value={categoryFilter}
+                    exclusive
+                    onChange={(_, value) => value && setCategoryFilter(value)}
+                    size="small"
+                  >
+                    {Object.entries(categoryMeta).map(([key, meta]) => (
+                      <ToggleButton key={key} value={key} aria-label={meta.label}>
+                        <Stack spacing={0.5} alignItems="center">
+                          {meta.icon}
+                          <Typography variant="caption">{meta.label}</Typography>
+                        </Stack>
+                      </ToggleButton>
+                    ))}
+                  </ToggleButtonGroup>
+                  <FormControl sx={{ minWidth: 200 }} size="small">
+                    <InputLabel id="institution-filter-label">Institution</InputLabel>
+                    <Select
+                      labelId="institution-filter-label"
+                      value={institutionFilter}
+                      label="Institution"
+                      onChange={(event) => setInstitutionFilter(event.target.value)}
+                    >
+                      {institutionOptions.map((option) => (
+                        <MenuItem key={option} value={option}>
+                          {option === 'all' ? 'All institutions' : option}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Stack>
+
+                <ToggleButtonGroup
+                  value={viewMode}
+                  exclusive
+                  onChange={(_, value) => value && setViewMode(value)}
+                  size="small"
+                >
+                  <ToggleButton value="grid" aria-label="Grid view">
+                    <ViewModule fontSize="small" />
+                  </ToggleButton>
+                  <ToggleButton value="table" aria-label="Table view">
+                    <TableRows fontSize="small" />
+                  </ToggleButton>
+                </ToggleButtonGroup>
+              </Stack>
+
+              {loading && (
+                <LinearProgress />
+              )}
+            </Stack>
+          </CardContent>
+        </Card>
+
+        {error && (
+          <Alert severity={filteredContent.length === 0 ? 'info' : 'error'}>{error}</Alert>
+        )}
+
+        {filteredContent.length === 0 ? (
+          <Paper variant="outlined" sx={{ textAlign: 'center', py: 8 }}>
+            <Typography variant="h5" color="text.secondary" gutterBottom>
+              📭 No matching content found
+            </Typography>
+            <Typography variant="body1" color="text.secondary" gutterBottom>
+              Adjust your filters or refresh the catalog to bring in more assets.
+            </Typography>
+            <Button variant="contained" onClick={fetchApprovedContent} startIcon={<RefreshIcon />}>
+              Refresh catalog
+            </Button>
+          </Paper>
+        ) : viewMode === 'table' ? (
+          <TableContainer component={Paper} variant="outlined">
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Title</TableCell>
+                  <TableCell>Course / Unit</TableCell>
+                  <TableCell align="center">Type</TableCell>
+                  <TableCell align="center">Premium</TableCell>
+                  <TableCell>Institution</TableCell>
+                  <TableCell>Reviewed</TableCell>
+                  <TableCell align="center">Size</TableCell>
+                  <TableCell align="right">Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {filteredContent.map((item) => (
+                  <TableRow key={item.id} hover>
+                    <TableCell>
+                      <Stack spacing={0.5}>
+                        <Typography variant="body2" sx={{ fontWeight: 600 }}>{item.topicTitle}</Typography>
+                        <Typography variant="caption" color="text.secondary">{item.filename}</Typography>
+                      </Stack>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2">{item.courseName}</Typography>
+                      <Typography variant="caption" color="text.secondary">{item.unitName}</Typography>
+                    </TableCell>
+                    <TableCell align="center">
+                      <Chip size="small" color={getContentColor(item.type)} label={item.type.toUpperCase()} />
+                    </TableCell>
+                    <TableCell align="center">
+                      {item.isPremium ? <Star color="warning" fontSize="small" /> : '—'}
+                    </TableCell>
+                    <TableCell>
+                      {item.raw?.institutionName || item.raw?.institution?.name || '—'}
+                    </TableCell>
+                    <TableCell>{formatDateTime(item.lastReviewedAt)}</TableCell>
+                    <TableCell align="center">{formatFileSize(item.size)}</TableCell>
+                    <TableCell align="right">
+                      <Stack direction="row" spacing={1} justifyContent="flex-end">
+                        <Tooltip title="Preview">
+                          <IconButton size="small" onClick={() => handlePreview(item.raw)}>
+                            <Visibility fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Download">
+                          <IconButton size="small" onClick={() => handleDownloadFile(item.raw)}>
+                            <Download fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title={item.isPremium ? 'Remove premium' : 'Mark premium'}>
+                          <IconButton size="small" onClick={() => togglePremiumStatus(item.raw)}>
+                            {item.isPremium ? <StarBorder fontSize="small" /> : <Star fontSize="small" />}
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Edit">
+                          <IconButton size="small" onClick={() => handleEdit(item.raw)}>
+                            <Edit fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Delete">
+                          <IconButton size="small" color="error" onClick={() => handleDelete(item.raw)}>
+                            <Delete fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        ) : (
+          <Grid container spacing={2}>
+            {filteredContent.map((item) => (
+              <Grid item xs={12} md={6} xl={4} key={item.id}>
+                <Card variant="outlined">
+                  <CardContent>
+                    <Stack spacing={2}>
+                      <Stack direction="row" spacing={2} alignItems="flex-start">
+                        <Avatar sx={{ bgcolor: `${getContentColor(item.type)}.main`, color: 'white' }}>
+                          {getContentIcon(item.type)}
+                        </Avatar>
+                        <Stack spacing={0.5} flexGrow={1}>
+                          <Typography variant="h6">{item.topicTitle}</Typography>
+                          <Typography variant="body2" color="text.secondary">{item.courseName} • {item.unitName}</Typography>
+                          <Typography variant="caption" color="text.secondary">{item.filename}</Typography>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <Chip size="small" color={getContentColor(item.type)} label={item.type.toUpperCase()} />
+                            {item.isPremium && <Chip size="small" color="warning" label="Premium" icon={<Star fontSize="small" />} />}
+                          </Stack>
+                        </Stack>
+                        <Box>
+                          <IconButton size="small" onClick={(event) => handleMenuOpen(event, item.raw)}>
+                            <MoreVert fontSize="small" />
+                          </IconButton>
+                        </Box>
+                      </Stack>
+                      <Stack direction="row" spacing={2} justifyContent="space-between" alignItems="center">
+                        <Stack spacing={0.5}>
+                          <Typography variant="caption" color="text.secondary">Institution</Typography>
+                          <Typography variant="body2">{item.raw?.institutionName || item.raw?.institution?.name || '—'}</Typography>
+                        </Stack>
+                        <Stack spacing={0.5}>
+                          <Typography variant="caption" color="text.secondary">Reviewed</Typography>
+                          <Typography variant="body2">{formatDateTime(item.lastReviewedAt)}</Typography>
+                        </Stack>
+                        <Stack spacing={0.5}>
+                          <Typography variant="caption" color="text.secondary">Size</Typography>
+                          <Typography variant="body2">{formatFileSize(item.size)}</Typography>
+                        </Stack>
+                      </Stack>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Grid>
+            ))}
+          </Grid>
+        )}
+      </Stack>
 
       {/* Action Menu */}
       <Menu

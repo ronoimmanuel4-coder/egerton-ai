@@ -3,6 +3,7 @@ import { lazy } from 'react';
 // Lazy load components for better performance (Super Admin-focused)
 export const LazyLoginPage = lazy(() => import('../pages/Auth/LoginPage'));
 export const LazySuperAdminDashboard = lazy(() => import('../pages/Admin/SuperAdminDashboard'));
+export const LazyUserDetailPage = lazy(() => import('../pages/Admin/UserDetailPage'));
 
 // Loading fallback component
 export const PageLoader = () => (

@@ -1,452 +1,521 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { Box, Container, LinearProgress, Skeleton, Stack } from '@mui/material';
+import { alpha, useTheme } from '@mui/material/styles';
 import {
-  Box,
-  Container,
-  Typography,
-  Button,
-  Grid,
-  Card,
-  CardContent,
-  CardActions,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  Paper,
-  Avatar,
-  useTheme,
-  alpha,
-  Chip,
-  IconButton,
-  Divider,
-} from '@mui/material';
-import {
-  School,
-  Work,
-  Quiz,
-  VideoLibrary,
-  Description,
-  TrendingUp,
-  Security,
-  Speed,
-  Star,
-  PlayArrow,
-  GetApp,
-  People,
-  AutoStories,
-  EmojiEvents,
+  School as SchoolIcon,
+  People as PeopleIcon,
+  VideoLibrary as VideoLibraryIcon,
+  Security as SecurityIcon
 } from '@mui/icons-material';
-import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../utils/api';
+import HeroSection from '../components/Home/HeroSection';
+import StatsSection from '../components/Home/StatsSection';
+import FeaturedCoursesSection from '../components/Home/FeaturedCoursesSection';
+import HowItWorksSection from '../components/Home/HowItWorksSection';
+import StudentSuccessStories from '../components/Home/StudentSuccessStories';
+import CTASection from '../components/Home/CTASection';
+import { motion } from 'framer-motion';
+import { fetchSuccessStories } from '../utils/dataApi';
+
+const BASE_STATS = [
+  {
+    id: 'students',
+    value: '48k+',
+    label: 'Active Kenyan students',
+    icon: <PeopleIcon />
+  },
+  {
+    id: 'programmes',
+    value: '120+',
+    label: 'Verified programmes',
+    icon: <SchoolIcon />
+  },
+  {
+    id: 'resources',
+    value: '5k+',
+    label: 'Premium study resources',
+    icon: <VideoLibraryIcon />
+  },
+  {
+    id: 'success',
+    value: '92%',
+    label: 'Students reporting grade boosts',
+    caption: 'Within the first term',
+    icon: <SecurityIcon />
+  }
+];
+
+// Will be populated dynamically from API as a fallback
+const FEATURED_COURSES_FALLBACK = [
+  {
+    id: 'placeholder-1',
+    name: 'Explore curated programmes',
+    institution: 'EduVault',
+    description: 'Stream lecture recordings, download notes, and tackle CAT simulations across Kenyan campuses.',
+    tags: ['Lecture videos', 'Notes', 'CATs'],
+    icon: 'video'
+  }
+];
+
+const WORKFLOW_STEPS = [
+  {
+    title: 'Select your institution',
+    description: 'Unlock curated programme dashboards, notices, and faculty guidance.'
+  },
+  {
+    title: 'Access premium study packs',
+    description: 'Stream lecture recordings, download notes, and tackle CAT simulations.'
+  },
+  {
+    title: 'Stay on track',
+    description: 'Get mentorship alerts, plan revision calendars, and monitor progress.'
+  }
+];
+
+const SUCCESS_STORIES = [
+  {
+    id: 'jane',
+    name: 'Jane Wanjiru',
+    institution: 'JKUAT · Mechatronics',
+    quote: 'Recorded labs and refresher notes helped me jump two grades in control systems.',
+    resources: ['Lab recordings', 'CAT simulations']
+  },
+  {
+    id: 'mike',
+    name: 'Mike Oduor',
+    institution: 'UoN · School of Law',
+    quote: 'EduVault’s case digest bank made moot prep efficient for our entire cohort.',
+    resources: ['Case digests', 'Moot recordings']
+  },
+  {
+    id: 'faith',
+    name: 'Faith Kendi',
+    institution: 'KU · Nursing',
+    quote: 'Ward mentorship alerts kept me in sync with practicals and OSCE prep.',
+    resources: ['Mentorship alerts', 'OSCE flashcards']
+  }
+];
 
 const HomePage = () => {
   const theme = useTheme();
   const navigate = useNavigate();
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated } = useAuth();
   const [institutions, setInstitutions] = useState([]);
   const [selectedInstitution, setSelectedInstitution] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [homeStats, setHomeStats] = useState(BASE_STATS);
+  const [heroMetrics, setHeroMetrics] = useState(null);
+  const [featuredCourses, setFeaturedCourses] = useState(FEATURED_COURSES_FALLBACK);
+  const [successStoriesData, setSuccessStoriesData] = useState([]);
 
-  useEffect(() => {
-    fetchInstitutions();
+  useLayoutEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' });
   }, []);
 
-  const fetchInstitutions = async () => {
+  useEffect(() => {
+    const previousRestoration = window.history.scrollRestoration;
     try {
-      const response = await api.get('/api/institutions');
-      setInstitutions(response.data.institutions);
+      window.history.scrollRestoration = 'manual';
     } catch (error) {
-      console.error('Error fetching institutions:', error);
+      console.warn('Scroll restoration not supported', error);
+    }
+    return () => {
+      try {
+        window.history.scrollRestoration = previousRestoration || 'auto';
+      } catch (error) {
+        console.warn('Unable to reset scroll restoration', error);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const fetchHomeData = async () => {
+      try {
+        setLoading(true);
+
+        const [institutionsResult, coursesResult, resourcesResult, storiesResult] = await Promise.allSettled([
+          api.get('/api/institutions'),
+          api.get('/api/courses'),
+          api.get('/api/resources'),
+          fetchSuccessStories(6)
+        ]);
+
+        const institutionsData =
+          institutionsResult.status === 'fulfilled'
+            ? institutionsResult.value.data?.institutions || []
+            : [];
+        const coursesData =
+          coursesResult.status === 'fulfilled'
+            ? coursesResult.value.data?.courses || []
+            : [];
+        const resourcesData =
+          resourcesResult.status === 'fulfilled'
+            ? resourcesResult.value.data?.resources || []
+            : [];
+
+        // Success stories
+        const storiesData =
+          storiesResult.status === 'fulfilled'
+            ? storiesResult.value || []
+            : [];
+
+        const normaliseId = (value) => {
+          if (!value) return null;
+          if (typeof value === 'string' || typeof value === 'number') {
+            return String(value);
+          }
+          if (typeof value === 'object') {
+            const nestedValue = value._id || value.id || value.value || null;
+            return nestedValue ? String(nestedValue) : null;
+          }
+          return null;
+        };
+
+        const pickPositiveNumber = (...values) => {
+          for (const value of values) {
+            if (value === undefined || value === null) {
+              continue;
+            }
+            const numeric = typeof value === 'number' ? value : Number(value);
+            if (Number.isFinite(numeric) && numeric > 0) {
+              return numeric;
+            }
+          }
+          return null;
+        };
+
+        const courseInstitutionIds = new Set();
+        coursesData.forEach((course) => {
+          const institutionRef =
+            course?.institution ||
+            course?.institutionId ||
+            course?.institution_id ||
+            course?.institutionDetails;
+          const institutionId = normaliseId(institutionRef);
+          if (institutionId) {
+            courseInstitutionIds.add(institutionId);
+          }
+        });
+
+        const sanitizedInstitutions = [];
+        const seenInstitutionIds = new Set();
+
+        const getInstitutionStudentCount = (institution) =>
+          pickPositiveNumber(
+            institution?.studentCount,
+            institution?.students,
+            institution?.metrics?.students,
+            institution?.metrics?.studentsOnboarded,
+            institution?.metrics?.totalStudents
+          ) || 0;
+
+        institutionsData.forEach((institution) => {
+          const rawId = normaliseId(institution?._id || institution?.id);
+          if (!rawId || seenInstitutionIds.has(rawId)) {
+            return;
+          }
+
+          seenInstitutionIds.add(rawId);
+
+          const isActive = institution?.isActive !== false;
+          const programmeCountEstimate = Array.isArray(institution?.programmes)
+            ? institution.programmes.length
+            : Number(institution?.programmesCount);
+          const hasProgrammes = Number.isFinite(programmeCountEstimate) && programmeCountEstimate > 0;
+          const numericStudentCount = pickPositiveNumber(
+            institution?.studentCount,
+            institution?.students,
+            institution?.metrics?.students,
+            institution?.metrics?.studentsOnboarded,
+            institution?.metrics?.totalStudents
+          );
+          const hasStudents = typeof numericStudentCount === 'number';
+          const linkedToCourse = courseInstitutionIds.has(rawId);
+
+          const hasEssentialInfo = Boolean(institution?.name && institution?.shortName);
+          if (!linkedToCourse && !hasStudents && !hasProgrammes) {
+            // Allow institutions without linked data as long as they have core metadata
+            if (!hasEssentialInfo) {
+              return;
+            }
+          }
+
+          const sanitizedInstitution = {
+            ...institution,
+            isActive
+          };
+
+          if (hasStudents) {
+            sanitizedInstitution.studentCount = numericStudentCount;
+            sanitizedInstitution.students = numericStudentCount;
+          }
+
+          sanitizedInstitutions.push(sanitizedInstitution);
+        });
+
+        const sortedInstitutions = sanitizedInstitutions
+          .slice()
+          .sort((a, b) => getInstitutionStudentCount(b) - getInstitutionStudentCount(a));
+
+        setInstitutions(sortedInstitutions);
+
+        if (sortedInstitutions.length > 0) {
+          setSelectedInstitution((current) => {
+            if (current) {
+              const isStillPresent = sortedInstitutions.some((institution) => {
+                const institutionId = normaliseId(institution?._id || institution?.id);
+                return institutionId && institutionId === String(current);
+              });
+              if (isStillPresent) {
+                return current;
+              }
+            }
+
+            const firstId = normaliseId(sortedInstitutions[0]._id || sortedInstitutions[0].id);
+            return firstId || '';
+          });
+        } else {
+          setSelectedInstitution('');
+        }
+
+        const sanitizedInstitutionIds = new Set(
+          sortedInstitutions.map((institution) => normaliseId(institution?._id || institution?.id)).filter(Boolean)
+        );
+
+        const relevantCourses = Array.isArray(coursesData)
+          ? coursesData.filter((course) => {
+              const institutionId = normaliseId(
+                course?.institution ||
+                  course?.institutionId ||
+                  course?.institution_id ||
+                  course?.institutionDetails
+              );
+              return institutionId && sanitizedInstitutionIds.has(institutionId);
+            })
+          : [];
+
+        const courseById = new Map();
+        if (Array.isArray(coursesData)) {
+          coursesData.forEach((course) => {
+            const courseId = normaliseId(course?._id || course?.id);
+            if (courseId) {
+              courseById.set(courseId, course);
+            }
+          });
+        }
+
+        const relevantResources = Array.isArray(resourcesData)
+          ? resourcesData.filter((resource) => {
+              const resourceInstitutionId = normaliseId(
+                resource?.institution ||
+                  resource?.institutionId ||
+                  resource?.institution_id ||
+                  resource?.institutionDetails
+              );
+              if (resourceInstitutionId && sanitizedInstitutionIds.has(resourceInstitutionId)) {
+                return true;
+              }
+
+              const resourceCourseId = normaliseId(
+                resource?.course ||
+                  resource?.courseId ||
+                  resource?.course_id ||
+                  resource?.unit?.course ||
+                  resource?.unit?.courseId
+              );
+
+              if (resourceCourseId && courseById.has(resourceCourseId)) {
+                const course = courseById.get(resourceCourseId);
+                const courseInstitutionId = normaliseId(
+                  course?.institution || course?.institutionId || course?.institution_id || course?.institutionDetails
+                );
+                return courseInstitutionId && sanitizedInstitutionIds.has(courseInstitutionId);
+              }
+
+              return false;
+            })
+          : [];
+
+        const totalStudents = sortedInstitutions.reduce((sum, institution) => {
+          const numericValue = getInstitutionStudentCount(institution);
+          return Number.isFinite(numericValue) && numericValue > 0 ? sum + numericValue : sum;
+        }, 0);
+
+        const totalInstitutions = sortedInstitutions.length;
+        const totalProgrammes = relevantCourses.length;
+        const totalResources = relevantResources.length;
+
+        const dynamicStats = BASE_STATS.map((stat) => {
+          if (stat.id === 'students') {
+            return {
+              ...stat,
+              value: totalStudents > 0 ? totalStudents.toLocaleString() : '—',
+              caption: totalStudents > 0 ? 'Across active partner campuses' : undefined
+            };
+          }
+          if (stat.id === 'programmes') {
+            return {
+              ...stat,
+              value: totalProgrammes > 0 ? totalProgrammes.toLocaleString() : '—',
+              caption: totalProgrammes > 0 ? 'Verified programmes available today' : undefined
+            };
+          }
+          if (stat.id === 'resources') {
+            return {
+              ...stat,
+              value: totalResources > 0 ? totalResources.toLocaleString() : '—',
+              caption: totalResources > 0 ? 'Premium study assets ready to download' : undefined
+            };
+          }
+          return stat;
+        });
+
+        setHomeStats(dynamicStats);
+        setHeroMetrics({
+          totalInstitutions,
+          totalProgrammes: totalProgrammes > 0 ? totalProgrammes : null,
+          totalStudents: totalStudents > 0 ? totalStudents : null,
+          topInstitutions: sortedInstitutions.slice(0, 6)
+        });
+
+        // Build dynamic featured courses from courses data
+        const featured = (Array.isArray(coursesData) ? coursesData : [])
+          .slice(0, 6)
+          .map((c) => ({
+            id: c._id || c.id || c.code,
+            name: c.name,
+            institution: (typeof c.institution === 'object' && (c.institution?.shortName || c.institution?.name)) || '—',
+            description: c.description || 'Curated study packs with lecture videos, notes and assessments.',
+            tags: Array.isArray(c.subcourses) && c.subcourses.length > 0 ? c.subcourses.slice(0, 3) : [c.department].filter(Boolean),
+            icon: (Array.isArray(c.careerProspects) && c.careerProspects.length > 0) ? 'article' : 'video'
+          }));
+        if (featured.length > 0) setFeaturedCourses(featured);
+        // Apply stories strictly from database; if empty, hide the section
+        setSuccessStoriesData(Array.isArray(storiesData) ? storiesData : []);
+
+      } catch (error) {
+        console.error('Error fetching home data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchHomeData();
+  }, []);
+
+  const handleInstitutionChange = (institutionId) => {
+    setSelectedInstitution(institutionId);
+  };
+
+  const handleExploreInstitution = () => {
+    if (selectedInstitution) {
+      navigate(`/institution/${selectedInstitution}`);
+    } else {
+      navigate('/institutions');
     }
   };
 
-  const handleInstitutionSelect = () => {
-    if (selectedInstitution) {
-      if (isAuthenticated) {
-        navigate(`/institution/${selectedInstitution}`);
-      } else {
-        navigate('/register', { state: { institutionId: selectedInstitution } });
+  const handleFeaturedCourse = (course) => {
+    if (course?.id) {
+      navigate(`/course/${course.id}`);
+    }
+  };
+
+  const featuredCoursesMemo = useMemo(() => featuredCourses && featuredCourses.length > 0 ? featuredCourses : FEATURED_COURSES_FALLBACK, [featuredCourses]);
+  const workflowSteps = useMemo(() => WORKFLOW_STEPS, []);
+  const successStories = useMemo(() => successStoriesData, [successStoriesData]);
+
+  const sectionVariant = {
+    hidden: { opacity: 0, y: 48 },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.7, ease: [0.19, 1, 0.22, 1] } }
+  };
+
+  const staggerContainer = {
+    hidden: { opacity: 1 },
+    visible: {
+      opacity: 1,
+      transition: {
+        staggerChildren: 0.18,
+        delayChildren: 0.15
       }
     }
   };
 
-  const features = [
-    {
-      icon: <VideoLibrary sx={{ fontSize: 40 }} />,
-      title: 'HD Lecture Recordings',
-      description: 'Access premium video lectures from Kenya\'s top institutions with crystal clear quality',
-      color: theme.palette.primary.main,
-      stats: '5,000+ Videos',
-    },
-    {
-      icon: <AutoStories sx={{ fontSize: 40 }} />,
-      title: 'Past Papers & CATs',
-      description: 'Comprehensive collection of past papers, CATs, and assignments with model answers',
-      color: theme.palette.secondary.main,
-      stats: '10,000+ Papers',
-    },
-    {
-      icon: <Quiz sx={{ fontSize: 40 }} />,
-      title: 'AI Study Assistant',
-      description: 'Get instant help, generate custom quizzes, and receive personalized study recommendations',
-      color: theme.palette.success.main,
-      stats: '24/7 Available',
-    },
-    {
-      icon: <EmojiEvents sx={{ fontSize: 40 }} />,
-      title: 'Career Opportunities',
-      description: 'Discover exclusive job postings and internships tailored to your field of study',
-      color: theme.palette.warning.main,
-      stats: '500+ Jobs',
-    },
-  ];
+  if (loading) {
+    return (
+      <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
+        <LinearProgress color="primary" sx={{ position: 'sticky', top: 0, left: 0, zIndex: 10 }} />
+        <Container maxWidth="lg" sx={{ py: 6 }}>
+          <Stack spacing={4}>
+            <Stack
+              direction={{ xs: 'column', md: 'row' }}
+              spacing={3}
+              alignItems="center"
+              sx={{ p: 4, borderRadius: 4, bgcolor: alpha(theme.palette.primary.main, 0.08) }}
+            >
+              <Skeleton variant="circular" width={80} height={80}>
+                <SchoolIcon />
+              </Skeleton>
+              <Box sx={{ flexGrow: 1, width: '100%' }}>
+                <Skeleton variant="text" width="60%" height={40} />
+                <Skeleton variant="text" width="40%" height={24} />
+                <Skeleton variant="rectangular" width="100%" height={16} sx={{ mt: 2, borderRadius: 2 }} />
+              </Box>
+            </Stack>
 
-  const stats = [
-    { label: 'Students Served', value: '10,000+', icon: <School /> },
-    { label: 'Resources Available', value: '50,000+', icon: <Description /> },
-    { label: 'Institutions', value: '100+', icon: <TrendingUp /> },
-    { label: 'Success Rate', value: '95%', icon: <Security /> },
-  ];
+            <Stack spacing={2}>
+              <Skeleton variant="text" width="55%" height={32} />
+              <Skeleton variant="rectangular" width="100%" height={200} sx={{ borderRadius: 3 }} />
+            </Stack>
+          </Stack>
+        </Container>
+      </Box>
+    );
+  }
 
   return (
-    <Box>
-      {/* Hero Section */}
-      <Box
-        sx={{
-          background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.primary.dark} 100%)`,
-          color: 'white',
-          py: { xs: 8, md: 12 },
-          position: 'relative',
-          overflow: 'hidden',
-        }}
-      >
-        <Container maxWidth="lg">
-          <Grid container spacing={4} alignItems="center">
-            <Grid item xs={12} md={6}>
-              <motion.div
-                initial={{ opacity: 0, y: 50 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.8 }}
-              >
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                  <Chip 
-                    label="🎓 #1 Educational Platform" 
-                    sx={{ 
-                      bgcolor: 'rgba(255,255,255,0.2)', 
-                      color: 'white',
-                      fontWeight: 600,
-                      mb: 2
-                    }} 
-                  />
-                </Box>
-                <Typography
-                  variant="h1"
-                  component="h1"
-                  gutterBottom
-                  sx={{
-                    fontWeight: 800,
-                    fontSize: { xs: '2.5rem', md: '4rem' },
-                    lineHeight: 1.1,
-                    background: 'linear-gradient(45deg, #ffffff 30%, #ff9800 90%)',
-                    WebkitBackgroundClip: 'text',
-                    WebkitTextFillColor: 'transparent',
-                  }}
-                >
-                  Learn. Excel. Succeed.
-                </Typography>
-                <Typography
-                  variant="h4"
-                  sx={{
-                    mb: 1,
-                    color: 'rgba(255,255,255,0.9)',
-                    fontWeight: 600,
-                  }}
-                >
-                  Your Gateway to Educational Excellence
-                </Typography>
-                <Typography
-                  variant="h5"
-                  sx={{
-                    mb: 4,
-                    opacity: 0.9,
-                    fontWeight: 300,
-                    fontSize: { xs: '1.1rem', md: '1.3rem' },
-                  }}
-                >
-                  Access premium educational resources, past papers, lecture recordings, 
-                  and career opportunities from Kenya's top institutions.
-                </Typography>
+    <Stack
+      component={motion.div}
+      variants={staggerContainer}
+      initial="hidden"
+      animate="visible"
+      sx={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+    >
+      <HeroSection
+        institutions={institutions}
+        selectedInstitution={selectedInstitution}
+        onInstitutionChange={handleInstitutionChange}
+        onExplore={handleExploreInstitution}
+        isAuthenticated={isAuthenticated}
+        metrics={heroMetrics}
+      />
 
-                {/* Institution Selector */}
-                <Paper
-                  elevation={3}
-                  sx={{
-                    p: 3,
-                    borderRadius: 3,
-                    bgcolor: alpha(theme.palette.background.paper, 0.95),
-                    backdropFilter: 'blur(10px)',
-                  }}
-                >
-                  <Typography variant="h6" gutterBottom sx={{ color: 'text.primary' }}>
-                    Choose Your Institution
-                  </Typography>
-                  <Box sx={{ display: 'flex', gap: 2, flexDirection: { xs: 'column', sm: 'row' } }}>
-                    <FormControl fullWidth>
-                      <InputLabel>Select Institution</InputLabel>
-                      <Select
-                        value={selectedInstitution}
-                        onChange={(e) => setSelectedInstitution(e.target.value)}
-                        label="Select Institution"
-                      >
-                        {institutions.map((institution) => (
-                          <MenuItem key={institution._id} value={institution._id}>
-                            {institution.name} ({institution.shortName})
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                    <Button
-                      variant="contained"
-                      size="large"
-                      onClick={handleInstitutionSelect}
-                      disabled={!selectedInstitution}
-                      sx={{
-                        minWidth: { xs: '100%', sm: 150 },
-                        bgcolor: theme.palette.secondary.main,
-                        '&:hover': { bgcolor: theme.palette.secondary.dark },
-                      }}
-                    >
-                      {isAuthenticated ? 'Explore' : 'Get Started'}
-                    </Button>
-                  </Box>
-                </Paper>
-              </motion.div>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <motion.div
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.8, delay: 0.2 }}
-              >
-                <Box
-                  sx={{
-                    display: 'flex',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    height: 400,
-                  }}
-                >
-                  <Box
-                    sx={{
-                      width: 300,
-                      height: 300,
-                      borderRadius: '50%',
-                      background: `linear-gradient(45deg, ${alpha(theme.palette.secondary.main, 0.3)}, ${alpha(theme.palette.primary.light, 0.3)})`,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      backdropFilter: 'blur(10px)',
-                    }}
-                  >
-                    <School sx={{ fontSize: 120, opacity: 0.8 }} />
-                  </Box>
-                </Box>
-              </motion.div>
-            </Grid>
-          </Grid>
-        </Container>
+      <Box component={motion.div} variants={sectionVariant}>
+        <StatsSection stats={homeStats} />
       </Box>
 
-      {/* Features Section */}
-      <Container maxWidth="lg" sx={{ py: 8 }}>
-        <Typography
-          variant="h3"
-          component="h2"
-          textAlign="center"
-          gutterBottom
-          sx={{ fontWeight: 600, mb: 6 }}
-        >
-          Why Choose EduVault?
-        </Typography>
-        <Grid container spacing={4}>
-          {features.map((feature, index) => (
-            <Grid item xs={12} sm={6} md={3} key={index}>
-              <motion.div
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, delay: index * 0.1 }}
-              >
-                <Card
-                  sx={{
-                    height: '100%',
-                    textAlign: 'center',
-                    transition: 'transform 0.3s ease-in-out',
-                    '&:hover': {
-                      transform: 'translateY(-8px)',
-                      boxShadow: theme.shadows[8],
-                    },
-                  }}
-                >
-                  <CardContent sx={{ p: 4, position: 'relative' }}>
-                    <Box
-                      sx={{
-                        position: 'absolute',
-                        top: 16,
-                        right: 16,
-                        bgcolor: alpha(feature.color, 0.1),
-                        color: feature.color,
-                        px: 2,
-                        py: 0.5,
-                        borderRadius: 2,
-                        fontSize: '0.75rem',
-                        fontWeight: 600,
-                      }}
-                    >
-                      {feature.stats}
-                    </Box>
-                    <Avatar
-                      sx={{
-                        bgcolor: `linear-gradient(45deg, ${feature.color}, ${alpha(feature.color, 0.7)})`,
-                        color: 'white',
-                        width: 80,
-                        height: 80,
-                        mx: 'auto',
-                        mb: 3,
-                        boxShadow: `0 8px 25px ${alpha(feature.color, 0.3)}`,
-                      }}
-                    >
-                      {feature.icon}
-                    </Avatar>
-                    <Typography variant="h6" gutterBottom sx={{ fontWeight: 700, mb: 2 }}>
-                      {feature.title}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.6 }}>
-                      {feature.description}
-                    </Typography>
-                    <Box sx={{ mt: 3, display: 'flex', justifyContent: 'center' }}>
-                      <IconButton 
-                        size="small" 
-                        sx={{ 
-                          color: feature.color,
-                          '&:hover': { bgcolor: alpha(feature.color, 0.1) }
-                        }}
-                      >
-                        <PlayArrow />
-                      </IconButton>
-                    </Box>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            </Grid>
-          ))}
-        </Grid>
-      </Container>
-
-      {/* Stats Section */}
-      <Box sx={{ bgcolor: alpha(theme.palette.primary.main, 0.05), py: 8 }}>
-        <Container maxWidth="lg">
-          <Grid container spacing={4}>
-            {stats.map((stat, index) => (
-              <Grid item xs={6} md={3} key={index}>
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.6, delay: index * 0.1 }}
-                >
-                  <Box textAlign="center">
-                    <Avatar
-                      sx={{
-                        bgcolor: theme.palette.primary.main,
-                        width: 60,
-                        height: 60,
-                        mx: 'auto',
-                        mb: 2,
-                      }}
-                    >
-                      {stat.icon}
-                    </Avatar>
-                    <Typography
-                      variant="h4"
-                      sx={{ fontWeight: 700, color: theme.palette.primary.main }}
-                    >
-                      {stat.value}
-                    </Typography>
-                    <Typography variant="body1" color="text.secondary">
-                      {stat.label}
-                    </Typography>
-                  </Box>
-                </motion.div>
-              </Grid>
-            ))}
-          </Grid>
-        </Container>
+      <Box component={motion.div} variants={sectionVariant}>
+        <FeaturedCoursesSection courses={featuredCoursesMemo} onExplore={handleFeaturedCourse} />
       </Box>
 
-      {/* CTA Section */}
-      <Container maxWidth="lg" sx={{ py: 8 }}>
-        <Card
-          sx={{
-            background: `linear-gradient(135deg, ${theme.palette.secondary.main} 0%, ${theme.palette.secondary.dark} 100%)`,
-            color: 'white',
-            textAlign: 'center',
-            p: 6,
-          }}
-        >
-          <Typography variant="h4" gutterBottom sx={{ fontWeight: 600 }}>
-            Ready to Excel in Your Studies?
-          </Typography>
-          <Typography variant="h6" sx={{ mb: 4, opacity: 0.9 }}>
-            Join thousands of Kenyan students who trust EduVault for their academic success.
-          </Typography>
-          <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
-            {!isAuthenticated && (
-              <>
-                <Button
-                  variant="contained"
-                  size="large"
-                  onClick={() => navigate('/register')}
-                  sx={{
-                    bgcolor: 'white',
-                    color: theme.palette.secondary.main,
-                    '&:hover': { bgcolor: alpha('#ffffff', 0.9) },
-                  }}
-                >
-                  Get Started Free
-                </Button>
-                <Button
-                  variant="outlined"
-                  size="large"
-                  onClick={() => navigate('/login')}
-                  sx={{
-                    borderColor: 'white',
-                    color: 'white',
-                    '&:hover': { borderColor: 'white', bgcolor: alpha('#ffffff', 0.1) },
-                  }}
-                >
-                  Sign In
-                </Button>
-              </>
-            )}
-            {isAuthenticated && (
-              <Button
-                variant="contained"
-                size="large"
-                onClick={() => navigate('/resources')}
-                sx={{
-                  bgcolor: 'white',
-                  color: theme.palette.secondary.main,
-                  '&:hover': { bgcolor: alpha('#ffffff', 0.9) },
-                }}
-              >
-                Explore Resources
-              </Button>
-            )}
-          </Box>
-        </Card>
-      </Container>
-    </Box>
+      <Box component={motion.div} variants={sectionVariant}>
+        <HowItWorksSection steps={workflowSteps} />
+      </Box>
+
+      <Box component={motion.div} variants={sectionVariant}>
+        <StudentSuccessStories stories={successStories} />
+      </Box>
+
+      <Box component={motion.div} variants={sectionVariant}>
+        <CTASection
+          isAuthenticated={isAuthenticated}
+          onPrimaryAction={() => navigate(isAuthenticated ? '/resources' : '/register')}
+          onSecondaryAction={() => navigate('/login')}
+        />
+      </Box>
+    </Stack>
   );
 };
 

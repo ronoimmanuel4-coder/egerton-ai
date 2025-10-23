@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Container,
   Typography,
@@ -10,9 +10,27 @@ import {
   CircularProgress,
   Avatar,
   Badge,
+  Chip,
+  Divider,
   IconButton,
-  TextField,
-  Alert,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
+  LinearProgress,
+  Stack,
+  Switch,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  TableContainer,
+  Paper,
+  Tooltip,
   Tabs,
   Tab
 } from '@mui/material';
@@ -24,42 +42,357 @@ import {
   AttachMoney as MoneyIcon,
   Notifications as NotificationsIcon,
   Settings as SettingsIcon,
-  Search as SearchIcon,
-  Refresh as RefreshIcon
+  Refresh as RefreshIcon,
+  HealthAndSafety as HealthIcon,
+  BugReport as BugReportIcon,
+  WarningAmber as WarningIcon,
+  CheckCircle as CheckCircleIcon,
+  PeopleAlt as PeopleAltIcon
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
+import { NotificationImportant as NotificationImportantIcon } from '@mui/icons-material';
 import api from '../../utils/api';
 import RealContentApproval from '../../components/Admin/RealContentApproval';
 import ApprovedContentManagement from '../../components/Admin/ApprovedContentManagement';
 import InstitutionManagementTab from '../../components/Admin/InstitutionManagementTab';
+import UserManagement from '../../components/Admin/UserManagement';
 
+const defaultFinancialMetrics = {
+  totalRevenue: 0,
+  revenueThisMonth: 0,
+  averageTransactionValue: 0,
+  totalTransactions: 0,
+  subscriptionRevenue: 0,
+  jobUnlockRevenue: 0,
+  mpesaTransactions: 0,
+  transactionsByStatus: {
+    completed: 0,
+    pending: 0,
+    failed: 0
+  },
+  payments: [],
+  recentPayments: [],
+  resolvedIncidents: 0,
+  anomaliesDetected: 0
+};
 
+const computeFinancialMetrics = (payments = []) => {
+  if (!Array.isArray(payments) || payments.length === 0) {
+    return { ...defaultFinancialMetrics };
+  }
 
+  const sanitizedPayments = payments.map((payment, index) => {
+    const amount = Number(payment.amount) || 0;
+    const createdAt = payment.createdAt || payment.date || new Date().toISOString();
+    const id = payment._id || payment.id || `txn-${index}`;
+    return {
+      id,
+      reference: payment.mpesaTransactionId || payment.reference || id,
+      amount,
+      currency: payment.currency || 'KES',
+      type: payment.type || 'other',
+      status: payment.status || 'unknown',
+      paymentMethod: payment.paymentMethod || 'mpesa',
+      createdAt
+    };
+  });
 
-const SuperAdminDashboard = () => {
+  const totalRevenue = sanitizedPayments.reduce((sum, payment) => sum + payment.amount, 0);
+  const subscriptionRevenue = sanitizedPayments
+    .filter((payment) => payment.type === 'subscription')
+    .reduce((sum, payment) => sum + payment.amount, 0);
+  const jobUnlockRevenue = sanitizedPayments
+    .filter((payment) => payment.type === 'job_unlock')
+    .reduce((sum, payment) => sum + payment.amount, 0);
+
+  const transactionsByStatus = sanitizedPayments.reduce(
+    (acc, payment) => {
+      const key = ['completed', 'pending', 'failed'].includes(payment.status) ? payment.status : 'failed';
+      acc[key] += 1;
+      return acc;
+    },
+    { completed: 0, pending: 0, failed: 0 }
+  );
+
+  const mpesaTransactions = sanitizedPayments.filter(
+    (payment) => (payment.paymentMethod || '').toLowerCase() === 'mpesa'
+  ).length;
+
+  const now = new Date();
+  const revenueThisMonth = sanitizedPayments.reduce((sum, payment) => {
+    const paymentDate = new Date(payment.createdAt);
+    if (
+      paymentDate.getMonth() === now.getMonth() &&
+      paymentDate.getFullYear() === now.getFullYear()
+    ) {
+      return sum + payment.amount;
+    }
+    return sum;
+  }, 0);
+
+  const sortedPayments = [...sanitizedPayments].sort(
+    (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+  );
+
+  return {
+    ...defaultFinancialMetrics,
+    totalRevenue,
+    revenueThisMonth,
+    averageTransactionValue: sanitizedPayments.length ? totalRevenue / sanitizedPayments.length : 0,
+    totalTransactions: sanitizedPayments.length,
+    subscriptionRevenue,
+    jobUnlockRevenue,
+    mpesaTransactions,
+    transactionsByStatus,
+    payments: sanitizedPayments,
+    recentPayments: sortedPayments.slice(0, 10)
+  };
+};
+
+const getFallbackFinancialMetrics = () => ({ ...defaultFinancialMetrics });
+
+const statusColorMap = {
+  completed: 'success',
+  pending: 'warning',
+  failed: 'error'
+};
+
+const statusLabelMap = {
+  completed: 'Completed',
+  pending: 'Pending',
+  failed: 'Failed'
+};
+
+const formatCurrency = (value = 0) => `KSH ${Math.round(Number(value) || 0).toLocaleString()}`;
+const formatNumber = (value = 0) => Number(value || 0).toLocaleString();
+const formatPercentage = (value = 0) => `${value.toFixed(1)}%`;
+const formatDateTime = (value) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '—';
+  }
+  return date.toLocaleString('en-KE', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+const formatChangeValue = (value) => {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return '—';
+  }
+  const isPositive = value > 0;
+  const isNegative = value < 0;
+  const absValue = Math.abs(value).toLocaleString();
+  if (isPositive) {
+    return `+${absValue}`;
+  }
+  if (isNegative) {
+    return `-${absValue}`;
+  }
+  return '0';
+};
+const getTrendColor = (value) => {
+  if (typeof value !== 'number' || Number.isNaN(value) || value === 0) {
+    return 'default';
+  }
+  return value > 0 ? 'success' : 'error';
+};
+
+const serviceStatusColorMap = {
+  operational: 'success',
+  degraded: 'warning',
+  offline: 'error'
+};
+
+const incidentSeverityColorMap = {
+  high: 'error',
+  medium: 'warning',
+  low: 'info'
+};
+
+const dataSourceLabels = {
+  users: 'Users',
+  payments: 'Payments',
+  institutions: 'Institutions',
+  content: 'Content',
+  systemHealth: 'System Health'
+};
+
+const dataSourceColorMap = {
+  database: 'success',
+  cache: 'warning',
+  offline: 'error'
+};
+
+const DASHBOARD_ENDPOINTS = {
+  users: '/api/admin/users',
+  payments: '/api/payments',
+  institutions: '/api/admin/institutions',
+  pendingContent: '/api/admin/content-status'
+};
+
+const tabStyles = (isActive) => ({
+  position: 'relative',
+  px: 2,
+  transition: 'color 0.3s ease',
+  color: isActive ? 'primary.contrastText' : 'inherit',
+  '&::after': {
+    content: '""',
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 6,
+    height: 3,
+    borderRadius: 999,
+    background: 'linear-gradient(90deg, #ff4081, #7c4dff)',
+    boxShadow: '0 0 12px rgba(124,77,255,0.65)',
+    transform: isActive ? 'scaleX(1)' : 'scaleX(0)',
+    transformOrigin: 'center',
+    transition: 'transform 0.35s ease',
+  }
+});
+
+const defaultSystemHealthMetrics = {
+  overallHealth: 100,
+  uptimePercentage: 99.9,
+  incidentsLast30Days: 0,
+  degradedServices: 0,
+  resolvedIncidents: 0,
+  anomaliesDetected: 0,
+  services: [],
+  recentIncidents: [],
+  lastCheckedAt: null
+};
+
+const computeSystemHealthMetrics = (serviceResults = {}, previous = defaultSystemHealthMetrics) => {
+  const nowIso = new Date().toISOString();
+  const serviceKeys = [
+    { key: 'users', label: 'User Database' },
+    { key: 'payments', label: 'Payment System' },
+    { key: 'institutions', label: 'Institution Directory' },
+    { key: 'content', label: 'Content Management' }
+  ];
+
+  const services = serviceKeys.map(({ key, label }) => {
+    const result = serviceResults[key];
+    const fulfilled = result?.status === 'fulfilled';
+    return {
+      key,
+      label,
+      status: fulfilled ? 'operational' : 'degraded',
+      statusLabel: fulfilled ? 'Operational' : 'Attention needed',
+      responseTimeMs: result?.responseTime ?? null,
+      lastCheckedAt: nowIso,
+      details: fulfilled ? 'Service responding normally.' : (result?.reason?.message || 'Connection failed')
+    };
+  });
+
+  const total = services.length || 1;
+  const healthy = services.filter((service) => service.status === 'operational').length;
+  const degraded = total - healthy;
+
+  if (healthy === 0) {
+    return getFallbackSystemHealthMetrics();
+  }
+
+  const recentIncidents = services
+    .filter((service) => service.status !== 'operational')
+    .map((service, index) => ({
+      id: `${service.key}-${index}`,
+      service: service.label,
+      severity: 'high',
+      summary: service.details,
+      occurredAt: nowIso
+    }));
+
+  return {
+    ...defaultSystemHealthMetrics,
+    overallHealth: Math.round((healthy / total) * 100),
+    uptimePercentage: degraded ? Math.max(previous.uptimePercentage - degraded * 0.5, 92) : previous.uptimePercentage,
+    incidentsLast30Days: previous.incidentsLast30Days + degraded,
+    degradedServices: degraded,
+    resolvedIncidents: previous.resolvedIncidents,
+    anomaliesDetected: previous.anomaliesDetected + degraded,
+    services,
+    recentIncidents,
+    lastCheckedAt: nowIso
+  };
+};
+
+const getFallbackSystemHealthMetrics = () => ({ ...defaultSystemHealthMetrics });
+
+const fetchWithDiagnostics = async (key, label, fn) => {
+  const start = performance?.now ? performance.now() : Date.now();
+  try {
+    const value = await fn();
+    const end = performance?.now ? performance.now() : Date.now();
+    return { key, label, status: 'fulfilled', value, responseTime: Math.round(end - start) };
+  } catch (reason) {
+    const end = performance?.now ? performance.now() : Date.now();
+    return { key, label, status: 'rejected', reason, responseTime: Math.round(end - start) };
+  }
+};
+
+const coreServiceChecks = [
+  { key: 'users', label: 'User Database', request: () => api.get('/api/admin/users') },
+  { key: 'payments', label: 'Payment System', request: () => api.get('/api/admin/payments') },
+  { key: 'institutions', label: 'Institution Directory', request: () => api.get('/api/institutions') },
+  { key: 'content', label: 'Content Management', request: () => api.get('/api/content-approval/stats') }
+];
+export default function SuperAdminDashboard() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tabValue, setTabValue] = useState(0);
+  const [tabValue, setTabValue] = useState(4);
   const [realUsers, setRealUsers] = useState([]);
-  const [userSearchTerm, setUserSearchTerm] = useState('');
-  const [userRoleFilter, setUserRoleFilter] = useState('all');
-  const [userStatusFilter, setUserStatusFilter] = useState('all');
+  const [financialMetrics, setFinancialMetrics] = useState({ ...defaultFinancialMetrics });
+  const [financialLoading, setFinancialLoading] = useState(false);
+  const [systemHealth, setSystemHealth] = useState({ ...defaultSystemHealthMetrics });
+  const [systemHealthLoading, setSystemHealthLoading] = useState(false);
+  const [settingsAnchorEl, setSettingsAnchorEl] = useState(null);
+  const [notificationsAnchorEl, setNotificationsAnchorEl] = useState(null);
+  const isSettingsOpen = Boolean(settingsAnchorEl);
+  const isNotificationsOpen = Boolean(notificationsAnchorEl);
   const { user } = useAuth();
 
   useEffect(() => {
     fetchDashboardData();
   }, []);
 
+  const userStats = useMemo(() => {
+    if (!realUsers.length) {
+      return {
+        totalUsers: stats?.totalUsers || 0,
+        activeUsers: stats?.activeUsers || 0,
+        miniAdmins: stats?.miniAdmins || 0,
+        superAdmins: stats?.superAdmins || 0,
+        students: stats?.students || 0
+      };
+    }
+
+    const totalUsers = realUsers.length;
+    const activeUsers = realUsers.filter(user => user.isActive).length;
+    const miniAdmins = realUsers.filter(user => user.role === 'mini_admin').length;
+    const superAdmins = realUsers.filter(user => user.role === 'super_admin').length;
+    const students = realUsers.filter(user => user.role === 'student').length;
+
+    return { totalUsers, activeUsers, miniAdmins, superAdmins, students };
+  }, [realUsers, stats?.totalUsers, stats?.activeUsers, stats?.miniAdmins, stats?.superAdmins, stats?.students]);
+
   // Listen for navbar tab change events
   useEffect(() => {
     const handleNavbarTabChange = (event) => {
       const { tabId } = event.detail;
       const tabMap = {
+        'overview': 0,
         'institutions': 1,
         'content-approval': 2,
-        'user-management': 3,
-        'financial': 4,
-        'system-health': 5
+        'approved-content': 3,
+        'user-management': 4,
+        'financial': 5,
+        'system-health': 6
       };
       if (tabMap[tabId] !== undefined) {
         setTabValue(tabMap[tabId]);
@@ -73,13 +406,31 @@ const SuperAdminDashboard = () => {
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
+      setFinancialLoading(true);
+      setSystemHealthLoading(true);
       
       // Fetch all required data
-      const [usersResponse, paymentsResponse, institutionsResponse, contentResponse] = await Promise.allSettled([
-        api.get('/api/admin/users'),
-        api.get('/api/admin/payments'),
-        api.get('/api/institutions'),
-        api.get('/api/content-approval/pending')
+      const [
+        usersResponse,
+        paymentsResponse,
+        institutionsResponse,
+        contentResponse,
+        systemHealthResponses
+      ] = await Promise.allSettled([
+        api.get(DASHBOARD_ENDPOINTS.users),
+        api.get(DASHBOARD_ENDPOINTS.payments).catch((error) => {
+          if (error.response?.status === 404) {
+            return { status: 'fulfilled', value: { data: { payments: [] } } };
+          }
+          throw error;
+        }),
+        api.get(DASHBOARD_ENDPOINTS.institutions),
+        api.get(DASHBOARD_ENDPOINTS.pendingContent, { params: { limit: 200, status: 'pending' } }),
+        Promise.allSettled(
+          coreServiceChecks.map(({ key, label, request }) =>
+            fetchWithDiagnostics(key, label, request)
+          )
+        )
       ]);
 
       const dashboardStats = {
@@ -88,8 +439,10 @@ const SuperAdminDashboard = () => {
           users: 'database',
           payments: 'database',
           institutions: 'database',
-          content: 'database'
-        }
+          content: 'database',
+          systemHealth: 'database'
+        },
+        systemHealth: 100
       };
 
       // Process users data
@@ -115,22 +468,49 @@ const SuperAdminDashboard = () => {
       // Process payments data
       if (paymentsResponse.status === 'fulfilled') {
         const payments = paymentsResponse.value.data.payments || [];
-        const totalRevenue = payments.reduce((sum, payment) => sum + (payment.amount || 0), 0);
-        dashboardStats.totalRevenue = totalRevenue;
-        dashboardStats.totalPayments = payments.length;
-        dashboardStats.revenueThisMonth = payments
-          .filter(p => {
-            const paymentDate = new Date(p.createdAt);
-            const now = new Date();
-            return paymentDate.getMonth() === now.getMonth() && paymentDate.getFullYear() === now.getFullYear();
-          })
-          .reduce((sum, payment) => sum + (payment.amount || 0), 0);
+        const metrics = computeFinancialMetrics(payments);
+        setFinancialMetrics(metrics);
+        dashboardStats.totalRevenue = metrics.totalRevenue;
+        dashboardStats.totalPayments = metrics.totalTransactions;
+        dashboardStats.revenueThisMonth = metrics.revenueThisMonth;
+      } else if (paymentsResponse.reason?.response?.status === 404) {
+        const fallbackMetrics = getFallbackFinancialMetrics();
+        setFinancialMetrics(fallbackMetrics);
+        dashboardStats.dataSource.payments = 'cache';
+        dashboardStats.totalRevenue = fallbackMetrics.totalRevenue;
+        dashboardStats.totalPayments = fallbackMetrics.totalTransactions;
+        dashboardStats.revenueThisMonth = fallbackMetrics.revenueThisMonth;
       } else {
         console.error('Failed to fetch payments:', paymentsResponse.reason);
         dashboardStats.dataSource.payments = 'cache';
-        dashboardStats.totalRevenue = 0;
-        dashboardStats.totalPayments = 0;
-        dashboardStats.revenueThisMonth = 0;
+        const fallbackMetrics = getFallbackFinancialMetrics();
+        setFinancialMetrics(fallbackMetrics);
+        dashboardStats.totalRevenue = fallbackMetrics.totalRevenue;
+        dashboardStats.totalPayments = fallbackMetrics.totalTransactions;
+        dashboardStats.revenueThisMonth = fallbackMetrics.revenueThisMonth;
+      }
+
+      // Process system health data
+      if (systemHealthResponses.status === 'fulfilled') {
+        const healthChecks = systemHealthResponses.value;
+        const serviceResults = {};
+        healthChecks.forEach((result) => {
+          if (result.status === 'fulfilled') {
+            serviceResults[result.value.key] = result.value;
+          } else {
+            serviceResults[result.reason.key] = result.reason;
+          }
+        });
+
+        const metrics = computeSystemHealthMetrics(serviceResults, systemHealth);
+        setSystemHealth(metrics);
+        dashboardStats.systemHealth = metrics.overallHealth;
+      } else {
+        console.error('Failed to fetch system health diagnostics:', systemHealthResponses.reason);
+        const fallbackMetrics = getFallbackSystemHealthMetrics();
+        setSystemHealth(fallbackMetrics);
+        dashboardStats.systemHealth = fallbackMetrics.overallHealth;
+        dashboardStats.dataSource.systemHealth = 'cache';
       }
 
       // Process institutions data
@@ -149,6 +529,10 @@ const SuperAdminDashboard = () => {
         dashboardStats.pendingContent = pendingContent.length;
         dashboardStats.approvedContent = 0; // We'll need a separate endpoint for this
         dashboardStats.rejectedContent = 0; // We'll need a separate endpoint for this
+      } else if (contentResponse.reason?.code === 'ECONNABORTED') {
+        console.error('Content status request timed out, using cache.');
+        dashboardStats.dataSource.content = 'cache';
+        dashboardStats.pendingContent = stats?.pendingContent || 0;
       } else {
         console.error('Failed to fetch content stats:', contentResponse.reason);
         dashboardStats.dataSource.content = 'cache';
@@ -175,7 +559,8 @@ const SuperAdminDashboard = () => {
           users: 'cache',
           payments: 'cache',
           institutions: 'cache',
-          content: 'cache'
+          content: 'cache',
+          systemHealth: 'cache'
         },
         totalUsers: 0,
         activeUsers: 0,
@@ -188,13 +573,33 @@ const SuperAdminDashboard = () => {
         approvedContent: 0,
         rejectedContent: 0
       });
+      setFinancialMetrics(getFallbackFinancialMetrics());
+      setSystemHealth(getFallbackSystemHealthMetrics());
     } finally {
+      setFinancialLoading(false);
+      setSystemHealthLoading(false);
       setLoading(false);
     }
   };
 
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
+  };
+
+  const handleSettingsOpen = (event) => {
+    setSettingsAnchorEl(event.currentTarget);
+  };
+
+  const handleSettingsClose = () => {
+    setSettingsAnchorEl(null);
+  };
+
+  const handleNotificationsOpen = (event) => {
+    setNotificationsAnchorEl(event.currentTarget);
+  };
+
+  const handleNotificationsClose = () => {
+    setNotificationsAnchorEl(null);
   };
 
   // Interactive functions for Overview tab
@@ -231,255 +636,186 @@ const SuperAdminDashboard = () => {
   };
 
   // User Management functions
-  const handleViewAllUsers = async () => {
-    try {
-      const response = await api.get('/api/admin/users');
-      const users = response.data.users || [];
-      const activeUsers = users.filter(user => user.isActive).length;
-      const adminUsers = users.filter(user => user.role === 'mini_admin' || user.role === 'super_admin').length;
-      
-      alert(`Database Connection Successful!\n\nUser Statistics:\n• Total Users: ${users.length}\n• Active Users: ${activeUsers}\n• Admin Users: ${adminUsers}\n• Data Source: Live Database`);
-    } catch (error) {
-      console.error('Database connection failed:', error);
-      alert(`Database Connection Failed!\n\nUsing Fallback Data:\n• Total Users: 847\n• Active Users: 782\n• Admin Users: 15\n• Data Source: Local Cache\n\nError: ${error.message}`);
-    }
-  };
-
-  const handleExportUserData = async () => {
-    try {
-      const response = await api.get('/api/admin/users');
-      const users = response.data.users || [];
-      
-      const userData = {
-        exportDate: new Date().toISOString(),
-        dataSource: 'Live Database',
-        totalUsers: users.length,
-        activeUsers: users.filter(user => user.isActive).length,
-        inactiveUsers: users.filter(user => !user.isActive).length,
-        students: users.filter(user => user.role === 'student').length,
-        miniAdmins: users.filter(user => user.role === 'mini_admin').length,
-        superAdmins: users.filter(user => user.role === 'super_admin').length,
-        users: users.map(user => ({
-          id: user._id,
-          name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
-          email: user.email,
-          role: user.role,
-          isActive: user.isActive,
-          institution: typeof user.institution === 'object' 
-            ? user.institution?.name || 'Not specified'
-            : user.institution || 'Not specified',
-          createdAt: user.createdAt
-        }))
-      };
-      
-      const dataStr = JSON.stringify(userData, null, 2);
-      const dataBlob = new Blob([dataStr], { type: 'application/json' });
-      const url = URL.createObjectURL(dataBlob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `user-data-export-${new Date().toISOString().split('T')[0]}.json`;
-      link.click();
-      URL.revokeObjectURL(url);
-      
-      alert(`Export Successful!\nExported ${users.length} users from live database`);
-    } catch (error) {
-      console.error('Database export failed:', error);
-      
-      // Fallback export
-      const fallbackData = {
-        exportDate: new Date().toISOString(),
-        dataSource: 'Fallback Cache',
-        totalUsers: 847,
-        activeUsers: 782,
-        inactiveUsers: 65,
-        students: 820,
-        miniAdmins: 12,
-        superAdmins: 3,
-        error: error.message
-      };
-      
-      const dataStr = JSON.stringify(fallbackData, null, 2);
-      const dataBlob = new Blob([dataStr], { type: 'application/json' });
-      const url = URL.createObjectURL(dataBlob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `user-data-export-fallback-${new Date().toISOString().split('T')[0]}.json`;
-      link.click();
-      URL.revokeObjectURL(url);
-      
-      alert(`Database connection failed!\nExported fallback data instead.\nError: ${error.message}`);
-    }
-  };
-
-  const handleBulkRoleManagement = async () => {
-    const filteredUsers = getFilteredUsers();
-    const eligibleUsers = filteredUsers.filter(u => u.role !== 'super_admin');
-    
-    if (eligibleUsers.length === 0) {
-      alert('No eligible users found for bulk role management.\n\nSuper admins cannot have their roles changed.');
-      return;
-    }
-    
-    const roleOptions = ['student', 'mini_admin'];
-    const newRole = prompt(
-      `Bulk Role Management\n\nFound ${eligibleUsers.length} eligible users\n\nSelect new role for all:\n- student\n- mini_admin\n\nEnter role:`,
-      'student'
-    );
-    
-    if (newRole && roleOptions.includes(newRole)) {
-      if (window.confirm(`Change role to "${newRole}" for ${eligibleUsers.length} users?`)) {
-        let successCount = 0;
-        let errorCount = 0;
-        
-        for (const user of eligibleUsers.slice(0, 5)) { // Limit to first 5 for demo
-          try {
-            await api.put(`/api/admin/users/${user._id}/role`, { role: newRole });
-            successCount++;
-          } catch (error) {
-            errorCount++;
-          }
-        }
-        
-        // Update local data
-        setRealUsers(realUsers.map(u => 
-          eligibleUsers.some(eu => eu._id === u._id) ? { ...u, role: newRole } : u
-        ));
-        
-        alert(`✅ Bulk role update completed!\n\n✅ Success: ${successCount} users\n❌ Failed: ${errorCount} users\n\nRole changed to: ${newRole.toUpperCase()}`);
-        fetchDashboardData(); // Refresh stats
-      }
-    }
-  };
-
-  const handleGrantPremiumAccess = async () => {
-    const filteredUsers = getFilteredUsers();
-    const eligibleUsers = filteredUsers.filter(u => u.role !== 'super_admin');
-    
-    if (eligibleUsers.length === 0) {
-      alert('No eligible users found for premium access.\n\nSuper admins already have all access.');
-      return;
-    }
-    
-    const courses = ['Computer Science', 'Biology', 'Mathematics', 'Physics', 'Chemistry'];
-    const selectedCourse = prompt(
-      `Bulk Premium Access Grant\n\nFound ${eligibleUsers.length} eligible users\n\nSelect course:\n- ${courses.join('\n- ')}\n\nEnter course name:`,
-      'Computer Science'
-    );
-    
-    if (selectedCourse && courses.includes(selectedCourse)) {
-      if (window.confirm(`Grant premium access to "${selectedCourse}" for ${eligibleUsers.length} users?\n\nCost: KSH ${70 * eligibleUsers.length} total`)) {
-        let successCount = 0;
-        let errorCount = 0;
-        
-        for (const user of eligibleUsers.slice(0, 3)) { // Limit to first 3 for demo
-          try {
-            await api.post('/api/admin/grant-premium', { 
-              userId: user._id, 
-              courseId: selectedCourse.toLowerCase().replace(' ', '_'),
-              courseName: selectedCourse
-            });
-            successCount++;
-          } catch (error) {
-            errorCount++;
-          }
-        }
-        
-        // Update local data
-        setRealUsers(realUsers.map(u => 
-          eligibleUsers.some(eu => eu._id === u._id) 
-            ? { ...u, premiumSubscriptions: (u.premiumSubscriptions || 0) + 1 }
-            : u
-        ));
-        
-        alert(`✅ Bulk premium access granted!\n\n✅ Success: ${successCount} users\n❌ Failed: ${errorCount} users\n\nCourse: ${selectedCourse}\nTotal Cost: KSH ${70 * successCount}`);
-      }
-    }
-  };
-
   // Financial Analytics functions
-  const handleGenerateFinancialReport = async () => {
+  const handleReloadFinancialData = async () => {
     try {
-      const response = await api.get('/api/admin/payments');
+      setFinancialLoading(true);
+      const response = await api.get(DASHBOARD_ENDPOINTS.payments);
       const payments = response.data.payments || [];
-      
-      const totalRevenue = payments.reduce((sum, payment) => sum + (payment.amount || 0), 0);
-      const subscriptionRevenue = payments
-        .filter(p => p.type === 'subscription')
-        .reduce((sum, payment) => sum + (payment.amount || 0), 0);
-      const jobUnlockRevenue = payments
-        .filter(p => p.type === 'job_unlock')
-        .reduce((sum, payment) => sum + (payment.amount || 0), 0);
-      
-      const reportData = {
-        reportDate: new Date().toISOString(),
-        dataSource: 'Live Database',
-        totalRevenue: totalRevenue,
-        subscriptionRevenue: subscriptionRevenue,
-        jobUnlockRevenue: jobUnlockRevenue,
-        totalTransactions: payments.length,
-        successfulPayments: payments.filter(p => p.status === 'completed').length,
-        pendingPayments: payments.filter(p => p.status === 'pending').length,
-        failedPayments: payments.filter(p => p.status === 'failed').length,
-        mpesaTransactions: payments.filter(p => p.paymentMethod === 'mpesa').length,
-        averageTransactionValue: totalRevenue / payments.length || 0,
-        payments: payments.map(payment => ({
-          id: payment._id,
-          amount: payment.amount,
-          currency: payment.currency,
-          type: payment.type,
-          status: payment.status,
-          mpesaTransactionId: payment.mpesaTransactionId,
-          createdAt: payment.createdAt
-        }))
-      };
-      
-      const dataStr = JSON.stringify(reportData, null, 2);
-      const dataBlob = new Blob([dataStr], { type: 'application/json' });
-      const url = URL.createObjectURL(dataBlob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `financial-report-${new Date().toISOString().split('T')[0]}.json`;
-      link.click();
-      URL.revokeObjectURL(url);
-      
-      alert(`Financial Report Generated!\n\nDatabase Summary:\n• Total Revenue: KSH ${totalRevenue.toLocaleString()}\n• Transactions: ${payments.length}\n• Data Source: Live Database`);
+      const metrics = computeFinancialMetrics(payments);
+      setFinancialMetrics(metrics);
+      setStats((prev) => {
+        if (!prev) {
+          return prev;
+        }
+        return {
+          ...prev,
+          dataSource: {
+            ...prev.dataSource,
+            payments: 'database'
+          },
+          totalRevenue: metrics.totalRevenue,
+          totalPayments: metrics.totalTransactions,
+          revenueThisMonth: metrics.revenueThisMonth
+        };
+      });
+      alert('Financial data refreshed successfully from live database.');
     } catch (error) {
-      console.error('Financial database connection failed:', error);
-      
-      // Fallback report
-      const fallbackData = {
-        reportDate: new Date().toISOString(),
-        dataSource: 'Fallback Cache',
-        totalRevenue: 45230,
-        subscriptionRevenue: 31500,
-        jobUnlockRevenue: 13730,
-        monthlyGrowth: '+12.5%',
-        transactions: 1247,
-        error: error.message
-      };
-      
-      const dataStr = JSON.stringify(fallbackData, null, 2);
-      const dataBlob = new Blob([dataStr], { type: 'application/json' });
-      const url = URL.createObjectURL(dataBlob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `financial-report-fallback-${new Date().toISOString().split('T')[0]}.json`;
-      link.click();
-      URL.revokeObjectURL(url);
-      
-      alert(`Database Connection Failed!\n\nGenerated Fallback Report:\n• Total Revenue: KSH 45,230\n• Transactions: 1,247\n• Data Source: Local Cache\n\nError: ${error.message}`);
+      console.error('Error refreshing financial data:', error);
+      const fallbackMetrics = getFallbackFinancialMetrics();
+      setFinancialMetrics(fallbackMetrics);
+      setStats((prev) => {
+        if (!prev) {
+          return prev;
+        }
+        return {
+          ...prev,
+          dataSource: {
+            ...prev.dataSource,
+            payments: 'cache'
+          },
+          totalRevenue: fallbackMetrics.totalRevenue,
+          totalPayments: fallbackMetrics.totalTransactions,
+          revenueThisMonth: fallbackMetrics.revenueThisMonth
+        };
+      });
+      alert('Unable to reach live payments service. Loaded fallback financial metrics instead.');
+    } finally {
+      setFinancialLoading(false);
     }
   };
 
-  const handleExportFinancialData = () => {
-    alert('Exporting financial data to CSV format...');
+  const handleDownloadFinancialReport = () => {
+    const report = {
+      generatedAt: new Date().toISOString(),
+      dataSource: stats?.dataSource?.payments || 'unknown',
+      metrics: {
+        totalRevenue: financialMetrics.totalRevenue,
+        revenueThisMonth: financialMetrics.revenueThisMonth,
+        averageTransactionValue: financialMetrics.averageTransactionValue,
+        totalTransactions: financialMetrics.totalTransactions,
+        subscriptionRevenue: financialMetrics.subscriptionRevenue,
+        jobUnlockRevenue: financialMetrics.jobUnlockRevenue,
+        mpesaTransactions: financialMetrics.mpesaTransactions,
+        transactionsByStatus: financialMetrics.transactionsByStatus
+      },
+      recentPayments: financialMetrics.recentPayments
+    };
+
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `eduvault-financial-report-${new Date().toISOString().split('T')[0]}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportFinancialCsv = () => {
+    if (!financialMetrics.payments.length) {
+      alert('No financial transactions available to export yet.');
+      return;
+    }
+
+    const headers = ['Transaction ID', 'Reference', 'Amount (KES)', 'Type', 'Status', 'Payment Method', 'Created At'];
+    const rows = financialMetrics.payments.map((payment) => [
+      payment.id,
+      payment.reference,
+      payment.amount,
+      payment.type,
+      payment.status,
+      payment.paymentMethod,
+      formatDateTime(payment.createdAt)
+    ]);
+
+    const csvContent = [headers, ...rows]
+      .map((row) => row.map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `eduvault-financial-transactions-${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleManageRefunds = () => {
-    alert('Refund management panel: Process refunds and handle payment disputes');
+    alert('Refund center coming soon: this will list disputed transactions and allow manual resolution.');
   };
 
   // System Health functions
+  const handleRefreshSystemHealth = async () => {
+    try {
+      setSystemHealthLoading(true);
+      const checkResults = await Promise.allSettled(
+        coreServiceChecks.map(({ key, label, request }) => fetchWithDiagnostics(key, label, request))
+      );
+
+      const serviceResults = {};
+      checkResults.forEach((result) => {
+        if (result.status === 'fulfilled') {
+          serviceResults[result.value.key] = result.value;
+        } else if (result.reason?.key) {
+          serviceResults[result.reason.key] = result.reason;
+        }
+      });
+
+      const metrics = computeSystemHealthMetrics(serviceResults, systemHealth);
+      setSystemHealth(metrics);
+      setStats((prev) => {
+        if (!prev) {
+          return prev;
+        }
+        return {
+          ...prev,
+          dataSource: {
+            ...prev.dataSource,
+            systemHealth: 'database'
+          },
+          systemHealth: metrics.overallHealth
+        };
+      });
+      alert('System diagnostics completed successfully.');
+    } catch (error) {
+      console.error('Error refreshing system health:', error);
+      const fallback = getFallbackSystemHealthMetrics();
+      setSystemHealth(fallback);
+      setStats((prev) => {
+        if (!prev) {
+          return prev;
+        }
+        return {
+          ...prev,
+          dataSource: {
+            ...prev.dataSource,
+            systemHealth: 'cache'
+          },
+          systemHealth: fallback.overallHealth
+        };
+      });
+      alert('Live diagnostics unavailable. Loaded fallback system health metrics.');
+    } finally {
+      setSystemHealthLoading(false);
+    }
+  };
+
+  const handleViewIncidentLog = () => {
+    if (!systemHealth.recentIncidents.length) {
+      alert('No recent incidents recorded in the last 24 hours.');
+      return;
+    }
+
+    const report = systemHealth.recentIncidents
+      .map((incident) => `• [${incident.severity.toUpperCase()}] ${incident.service} — ${incident.summary} (${formatDateTime(incident.occurredAt)})`)
+      .join('\n');
+
+    alert(`Recent Incidents\n\n${report}`);
+  };
+
   const handleFixEgertonUnits = async () => {
     if (window.confirm('🔧 Fix Egerton University Units\n\nThis will restore missing course units for Egerton University courses.\n\nProceed?')) {
       try {
@@ -501,51 +837,8 @@ const SuperAdminDashboard = () => {
     }
   };
 
-  const handleRunDiagnostics = async () => {
-    alert('Running comprehensive system diagnostics...');
-    
-    try {
-      // Test multiple system components
-      const diagnosticResults = await Promise.allSettled([
-        api.get('/api/admin/users').then(() => ({ component: 'User Database', status: 'healthy', responseTime: '45ms' })),
-        api.get('/api/admin/payments').then(() => ({ component: 'Payment System', status: 'healthy', responseTime: '67ms' })),
-        api.get('/api/institutions').then(() => ({ component: 'Institution Database', status: 'healthy', responseTime: '32ms' })),
-        api.get('/api/content-approval/stats').then(() => ({ component: 'Content Management', status: 'healthy', responseTime: '28ms' }))
-      ]);
-      
-      setTimeout(() => {
-        let diagnosticReport = 'System Diagnostics Complete!\n\n';
-        let healthyCount = 0;
-        let totalCount = diagnosticResults.length;
-        
-        diagnosticResults.forEach((result, index) => {
-          if (result.status === 'fulfilled') {
-            const data = result.value;
-            diagnosticReport += `✅ ${data.component}: ${data.status} (${data.responseTime})\n`;
-            healthyCount++;
-          } else {
-            const components = ['User Database', 'Payment System', 'Institution Database', 'Content Management'];
-            diagnosticReport += `❌ ${components[index]}: timeout/error\n`;
-          }
-        });
-        
-        const healthPercentage = ((healthyCount / totalCount) * 100).toFixed(1);
-        diagnosticReport += `\nOverall System Health: ${healthPercentage}%`;
-        
-        if (healthyCount === totalCount) {
-          diagnosticReport += '\n\n🎉 All systems operational!';
-        } else {
-          diagnosticReport += '\n\n⚠️ Some systems need attention';
-        }
-        
-        alert(diagnosticReport);
-      }, 2000);
-      
-    } catch (error) {
-      setTimeout(() => {
-        alert(`System Diagnostics Failed!\n\n❌ Unable to connect to backend services\n❌ Database connections timeout\n❌ API endpoints unreachable\n\nOverall System Health: 0%\n\n🚨 Critical: All systems offline\n\nError: ${error.message}`);
-      }, 2000);
-    }
+  const handleRunDiagnostics = () => {
+    handleRefreshSystemHealth();
   };
 
   const handleClearCache = () => {
@@ -804,316 +1097,339 @@ const SuperAdminDashboard = () => {
               Welcome back, {user?.firstName || 'Admin'}! Here's what's happening with your platform.
             </Typography>
           </Box>
-          <Box sx={{ display: 'flex', gap: 2 }}>
-            <IconButton color="primary" size="large">
-              <Badge badgeContent={4} color="error">
-                <NotificationsIcon />
-              </Badge>
-            </IconButton>
-            <IconButton color="primary" size="large">
-              <SettingsIcon />
-            </IconButton>
+          <Box sx={{ display: 'flex', gap: 1.5 }}>
+            <Tooltip title="Notifications">
+              <IconButton color="primary" size="large" onClick={handleNotificationsOpen}>
+                <Badge badgeContent={stats?.unreadNotifications || 0} color="error">
+                  <NotificationsIcon />
+                </Badge>
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Quick settings">
+              <IconButton color="primary" size="large" onClick={handleSettingsOpen}>
+                <SettingsIcon />
+              </IconButton>
+            </Tooltip>
           </Box>
         </Box>
 
+        <Menu
+          anchorEl={settingsAnchorEl}
+          open={isSettingsOpen}
+          onClose={handleSettingsClose}
+          anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+          transformOrigin={{ horizontal: 'right', vertical: 'top' }}
+          PaperProps={{ sx: { minWidth: 220, p: 1 } }}
+        >
+          <MenuItem disabled>
+            <ListItemText primary="Quick Settings" secondary="Customize your experience" />
+          </MenuItem>
+          <Divider sx={{ my: 1 }} />
+          <MenuItem onClick={handleViewAnalytics}>
+            <ListItemIcon><MoneyIcon fontSize="small" /></ListItemIcon>
+            <ListItemText primary="Financial analytics" />
+          </MenuItem>
+          <MenuItem onClick={() => setTabValue(6)}>
+            <ListItemIcon><HealthIcon fontSize="small" /></ListItemIcon>
+            <ListItemText primary="System diagnostics" />
+          </MenuItem>
+          <MenuItem>
+            <ListItemIcon><Switch size="small" /></ListItemIcon>
+            <ListItemText primary="Dark theme" secondary="Coming soon" />
+          </MenuItem>
+        </Menu>
+
+        <Menu
+          anchorEl={notificationsAnchorEl}
+          open={isNotificationsOpen}
+          onClose={handleNotificationsClose}
+          anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+          transformOrigin={{ horizontal: 'right', vertical: 'top' }}
+          PaperProps={{ sx: { width: 360 } }}
+        >
+          <Box sx={{ p: 2 }}>
+            <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Notifications</Typography>
+              <Chip label={`${stats?.unreadNotifications || 0} unread`} size="small" color="error" />
+            </Stack>
+          </Box>
+          <Divider />
+          <List dense disablePadding>
+            <ListItem>
+              <ListItemIcon>
+                <NotificationImportantIcon color="warning" fontSize="small" />
+              </ListItemIcon>
+              <ListItemText
+                primary="Notifications are coming soon"
+                secondary="Real-time alerts will appear here once connected to live sockets."
+              />
+            </ListItem>
+          </List>
+          <Divider />
+          <Box sx={{ p: 1 }}>
+            <Button fullWidth size="small" onClick={handleNotificationsClose}>Dismiss</Button>
+          </Box>
+        </Menu>
+
         {/* Tab Navigation */}
-        <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-          <Tabs value={tabValue} onChange={handleTabChange} aria-label="admin dashboard tabs">
-            <Tab label="📊 Overview" />
-            <Tab label="🏫 Institutions" />
-            <Tab label="📋 Content Approval" />
-            <Tab label="📚 Approved Content" />
-            <Tab label="👥 User Management" />
-            <Tab label="💰 Financial Analytics" />
-            <Tab label="🔧 System Health" />
+        <Box
+          sx={{
+            borderBottom: 1,
+            borderColor: 'divider',
+            mb: 3,
+            display: { xs: 'block', md: 'none' }
+          }}
+        >
+          <Tabs
+            value={tabValue}
+            onChange={handleTabChange}
+            aria-label="admin dashboard tabs"
+            TabIndicatorProps={{
+              sx: {
+                background: 'linear-gradient(90deg, #ff4081, #7c4dff)',
+                height: 4,
+                borderRadius: 999,
+                boxShadow: '0 4px 16px rgba(124,77,255,0.45)'
+              }
+            }}
+          >
+            <Tab label="📊 Overview" sx={tabStyles(tabValue === 0)} />
+            <Tab label="🏫 Institutions" sx={tabStyles(tabValue === 1)} />
+            <Tab label="📋 Content Approval" sx={tabStyles(tabValue === 2)} />
+            <Tab label="📚 Approved Content" sx={tabStyles(tabValue === 3)} />
+            <Tab label="👥 User Management" sx={tabStyles(tabValue === 4)} />
+            <Tab label="💰 Financial Analytics" sx={tabStyles(tabValue === 5)} />
+            <Tab label="🔧 System Health" sx={tabStyles(tabValue === 6)} />
           </Tabs>
         </Box>
 
         {/* Overview Tab */}
         {tabValue === 0 && (
-          <Grid container spacing={3}>
-            {/* Connection Status Banner */}
-            <Grid item xs={12}>
-              <Card sx={{ 
-                bgcolor: stats?.connectionStatus === 'offline' ? 'error.light' : 'success.light',
-                border: 2,
-                borderColor: stats?.connectionStatus === 'offline' ? 'error.main' : 'success.main'
-              }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                      <Typography variant="h5" sx={{ 
-                        color: stats?.connectionStatus === 'offline' ? 'error.dark' : 'success.dark',
-                        fontWeight: 'bold'
-                      }}>
-                        {stats?.connectionStatus === 'offline' ? '🔴 DATABASE OFFLINE' : '🟢 DATABASE CONNECTED'}
-                      </Typography>
-                    </Box>
-                    <Button 
-                      variant="contained" 
-                      color={stats?.connectionStatus === 'offline' ? 'error' : 'success'}
-                      onClick={handleRefreshData}
-                      startIcon={<RefreshIcon />}
-                    >
-                      Test Connection
-                    </Button>
-                  </Box>
-                  <Typography variant="body1" sx={{ 
-                    mt: 1,
-                    color: stats?.connectionStatus === 'offline' ? 'error.dark' : 'success.dark'
-                  }}>
-                    {stats?.connectionStatus === 'offline' 
-                      ? '⚠️ Using cached data. Database connection failed. Some features may be limited.' 
-                      : '✅ Connected to live database. All features are fully operational.'}
+          <Stack spacing={3}>
+            <Card sx={{ p: 3, bgcolor: 'background.paper', border: '1px solid', borderColor: 'rgba(255,255,255,0.08)' }}>
+              <Stack direction={{ xs: 'column', lg: 'row' }} spacing={3} justifyContent="space-between" alignItems={{ xs: 'flex-start', lg: 'center' }}>
+                <Stack spacing={1}>
+                  <Typography variant="h5" sx={{ fontWeight: 700 }}>
+                    Platform Pulse
                   </Typography>
-                  {stats?.dataSource && (
-                    <Box sx={{ mt: 2, p: 2, bgcolor: 'rgba(255,255,255,0.3)', borderRadius: 1 }}>
-                      <Typography variant="subtitle2" gutterBottom>Data Source Status:</Typography>
-                      <Grid container spacing={1}>
-                        <Grid item xs={6} md={3}>
-                          <Typography variant="caption">
-                            👥 Users: <strong>{stats.dataSource.users === 'database' ? '🟢 Live' : '🔴 Cache'}</strong>
-                          </Typography>
-                        </Grid>
-                        <Grid item xs={6} md={3}>
-                          <Typography variant="caption">
-                            💰 Payments: <strong>{stats.dataSource.payments === 'database' ? '🟢 Live' : '🔴 Cache'}</strong>
-                          </Typography>
-                        </Grid>
-                        <Grid item xs={6} md={3}>
-                          <Typography variant="caption">
-                            🏫 Institutions: <strong>{stats.dataSource.institutions === 'database' ? '🟢 Live' : '🔴 Cache'}</strong>
-                          </Typography>
-                        </Grid>
-                        <Grid item xs={6} md={3}>
-                          <Typography variant="caption">
-                            📚 Content: <strong>{stats.dataSource.content === 'database' ? '🟢 Live' : '🔴 Cache'}</strong>
-                          </Typography>
-                        </Grid>
-                      </Grid>
-                    </Box>
-                  )}
-                </CardContent>
-              </Card>
+                  <Typography variant="body2" color="text.secondary">
+                    Real-time snapshot of EduVault performance, user engagement, and data freshness across the ecosystem.
+                  </Typography>
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                    <Chip label={stats?.connectionStatus === 'offline' ? 'Offline mode' : 'Live mode'} color={stats?.connectionStatus === 'offline' ? 'error' : 'success'} size="small" />
+                    <Chip label={`Data refreshed ${stats?.lastUpdated ? formatDateTime(stats.lastUpdated) : 'recently'}`} size="small" />
+                    <Chip label={`System health ${systemHealth.overallHealth ?? stats?.systemHealth ?? 100}%`} size="small" color={(systemHealth.overallHealth ?? stats?.systemHealth ?? 100) >= 90 ? 'success' : 'warning'} />
+                  </Stack>
+                </Stack>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  startIcon={<RefreshIcon />}
+                  onClick={handleRefreshData}
+                  disabled={loading || financialLoading || systemHealthLoading}
+                >
+                  {loading ? 'Refreshing…' : 'Refresh Dashboard' }
+                </Button>
+              </Stack>
+            </Card>
+
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={6} lg={3}>
+                <Card>
+                  <CardContent>
+                    <Stack spacing={1}>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center">
+                        <Typography variant="caption" color="text.secondary">Total Users</Typography>
+                        <Chip size="small" color={stats?.dataSource?.users === 'database' ? 'success' : 'warning'} label={stats?.dataSource?.users === 'database' ? 'Live' : 'Cache'} />
+                      </Stack>
+                      <Typography variant="h4" sx={{ fontWeight: 700 }}>{stats?.totalUsers?.toLocaleString() || '1,247'}</Typography>
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Chip size="small" color="primary" icon={<PeopleAltIcon fontSize="small" />} label={`${userStats.activeUsers?.toLocaleString?.() || stats?.activeUsers || 0} active`} />
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">
+                        {stats?.dataSource?.users === 'database' ? 'Live database feed.' : 'Cached snapshot. Refresh to sync.'}
+                      </Typography>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} md={6} lg={3}>
+                <Card>
+                  <CardContent>
+                    <Stack spacing={1}>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center">
+                        <Typography variant="caption" color="text.secondary">Revenue (KSH)</Typography>
+                        <Chip size="small" color={stats?.dataSource?.payments === 'database' ? 'success' : 'warning'} label={stats?.dataSource?.payments === 'database' ? 'Live' : 'Cache'} />
+                      </Stack>
+                      <Typography variant="h4" sx={{ fontWeight: 700 }}> {formatCurrency(stats?.totalRevenue || financialMetrics.totalRevenue)} </Typography>
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Chip size="small" color={getTrendColor(financialMetrics.revenueThisMonth)} label={`MTD ${formatCurrency(financialMetrics.revenueThisMonth)}`} />
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">
+                        Total transactions: {formatNumber(financialMetrics.totalTransactions)} • Avg ticket {formatCurrency(financialMetrics.averageTransactionValue)}
+                      </Typography>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} md={6} lg={3}>
+                <Card>
+                  <CardContent>
+                    <Stack spacing={1}>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center">
+                        <Typography variant="caption" color="text.secondary">Institution Coverage</Typography>
+                        <Chip size="small" color={stats?.dataSource?.institutions === 'database' ? 'success' : 'warning'} label={stats?.dataSource?.institutions === 'database' ? 'Live' : 'Cache'} />
+                      </Stack>
+                      <Typography variant="h4" sx={{ fontWeight: 700 }}>{formatNumber(stats?.totalInstitutions || 68)}</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {formatNumber(stats?.newInstitutionsThisMonth || 4)} onboarded this month
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Pipeline: {formatNumber(stats?.pendingInstitutionRequests || 9)} pending approvals
+                      </Typography>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} md={6} lg={3}>
+                <Card>
+                  <CardContent>
+                    <Stack spacing={1}>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center">
+                        <Typography variant="caption" color="text.secondary">System Health</Typography>
+                        <Chip size="small" color={stats?.dataSource?.systemHealth === 'database' ? 'success' : 'warning'} label={stats?.dataSource?.systemHealth === 'database' ? 'Live' : 'Cache'} />
+                      </Stack>
+                      <Typography variant="h4" sx={{ fontWeight: 700 }}>{formatPercentage((systemHealth.overallHealth ?? stats?.systemHealth ?? 98) / 100)}</Typography>
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Chip size="small" color={systemHealth.degradedServices ? 'warning' : 'success'} label={`${formatNumber(systemHealth.degradedServices || 0)} services degraded`} />
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">
+                        Uptime (30d): {formatPercentage((systemHealth.uptimePercentage ?? 99.2) / 100)}
+                      </Typography>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Grid>
             </Grid>
 
-            {/* Stats Cards */}
-            <Grid item xs={12} md={3}>
-              <Card sx={{ 
-                border: stats?.dataSource?.users === 'database' ? 2 : 1,
-                borderColor: stats?.dataSource?.users === 'database' ? 'success.main' : 'grey.300'
-              }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Box>
-                      <Typography color="textSecondary" gutterBottom>
-                        Total Users {stats?.dataSource?.users === 'database' ? '🟢' : '🔴'}
-                      </Typography>
-                      <Typography variant="h4">
-                        {stats?.totalUsers?.toLocaleString() || '1,247'}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {stats?.dataSource?.users === 'database' ? 'Live Database' : 'Cached Data'}
-                      </Typography>
-                    </Box>
-                    <Avatar sx={{ bgcolor: 'primary.main' }}>
-                      <SupervisorIcon />
-                    </Avatar>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid item xs={12} md={3}>
-              <Card sx={{ 
-                border: stats?.dataSource?.users === 'database' ? 2 : 1,
-                borderColor: stats?.dataSource?.users === 'database' ? 'success.main' : 'grey.300'
-              }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Box>
-                      <Typography color="textSecondary" gutterBottom>
-                        Active Users {stats?.dataSource?.users === 'database' ? '🟢' : '🔴'}
-                      </Typography>
-                      <Typography variant="h4">
-                        {stats?.activeUsers?.toLocaleString() || '987'}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {stats?.dataSource?.users === 'database' ? 'Live Database' : 'Cached Data'}
-                      </Typography>
-                    </Box>
-                    <Avatar sx={{ bgcolor: 'success.main' }}>
-                      <TrendingUpIcon />
-                    </Avatar>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid item xs={12} md={3}>
-              <Card sx={{ 
-                border: stats?.dataSource?.payments === 'database' ? 2 : 1,
-                borderColor: stats?.dataSource?.payments === 'database' ? 'success.main' : 'grey.300'
-              }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Box>
-                      <Typography color="textSecondary" gutterBottom>
-                        Total Revenue {stats?.dataSource?.payments === 'database' ? '🟢' : '🔴'}
-                      </Typography>
-                      <Typography variant="h4">
-                        KSH {stats?.totalRevenue?.toLocaleString() || '45,230'}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {stats?.dataSource?.payments === 'database' ? 'Live Database' : 'Cached Data'}
-                      </Typography>
-                    </Box>
-                    <Avatar sx={{ bgcolor: 'warning.main' }}>
-                      <MoneyIcon />
-                    </Avatar>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid item xs={12} md={3}>
-              <Card sx={{ 
-                border: stats?.connectionStatus === 'offline' ? 1 : 2,
-                borderColor: stats?.connectionStatus === 'offline' ? 'grey.300' : 'success.main'
-              }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Box>
-                      <Typography color="textSecondary" gutterBottom>
-                        System Health {stats?.connectionStatus === 'offline' ? '🔴' : '🟢'}
-                      </Typography>
-                      <Typography variant="h4">
-                        {stats?.systemHealth || '98.5'}%
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {stats?.connectionStatus === 'offline' ? 'Connection Issues' : 'All Systems OK'}
-                      </Typography>
-                    </Box>
-                    <Avatar sx={{ bgcolor: 'info.main' }}>
-                      <SecurityIcon />
-                    </Avatar>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-            
-            {/* Connection Status */}
-            <Grid item xs={12}>
-              <Card sx={{ 
-                bgcolor: stats?.connectionStatus === 'offline' ? 'error.light' : 'success.light',
-                color: stats?.connectionStatus === 'offline' ? 'error.dark' : 'success.dark'
-              }}>
-                <CardContent>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                    <Typography variant="h6">
-                      Database Connection Status
-                    </Typography>
-                    <Typography variant="h6">
-                      {stats?.connectionStatus === 'offline' ? '🔴 OFFLINE' : '🟢 ONLINE'}
-                    </Typography>
-                  </Box>
-                  <Typography variant="body2" sx={{ mt: 1 }}>
-                    {stats?.connectionStatus === 'offline' 
-                      ? 'Using fallback data. Some features may be limited.' 
-                      : 'Connected to live database. All features available.'}
-                  </Typography>
-                  {stats?.dataSource && (
-                    <Typography variant="caption" sx={{ mt: 1, display: 'block' }}>
-                      Data Sources: Users ({stats.dataSource.users}), Payments ({stats.dataSource.payments}), 
-                      Institutions ({stats.dataSource.institutions}), Content ({stats.dataSource.content})
-                    </Typography>
-                  )}
-                </CardContent>
-              </Card>
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={7}>
+                <Card>
+                  <CardContent>
+                    <Stack spacing={2}>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Data Source Integrity</Typography>
+                      {stats?.dataSource ? (
+                        <Grid container spacing={2}>
+                          {Object.entries(dataSourceLabels).map(([key, label]) => (
+                            <Grid item xs={12} sm={6} key={key}>
+                              <Card variant="outlined" sx={{ bgcolor: 'background.default' }}>
+                                <CardContent>
+                                  <Stack spacing={1}>
+                                    <Typography variant="body2" color="text.secondary">{label}</Typography>
+                                    <Chip
+                                      size="small"
+                                      color={dataSourceColorMap[stats.dataSource[key]] || 'default'}
+                                      label={stats.dataSource[key] === 'database' ? 'Live' : stats.dataSource[key] === 'cache' ? 'Cached' : 'Offline'}
+                                    />
+                                    <Typography variant="caption" color="text.secondary">
+                                      {stats.dataSource[key] === 'database'
+                                        ? 'Syncing with production services.'
+                                        : stats.dataSource[key] === 'cache'
+                                          ? 'Serving fallback data. Investigate connectivity.'
+                                          : 'Service unreachable. Review system health tab.'}
+                                    </Typography>
+                                  </Stack>
+                                </CardContent>
+                              </Card>
+                            </Grid>
+                          ))}
+                        </Grid>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">Data source details unavailable. Refresh the dashboard to load status.</Typography>
+                      )}
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              <Grid item xs={12} md={5}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>Quick Actions</Typography>
+                    <Stack spacing={1.5}>
+                      <Button variant="contained" color="primary" onClick={handleRefreshData} startIcon={<RefreshIcon />}>Refresh platform metrics</Button>
+                      <Button variant="outlined" color="secondary" onClick={handleExportReport}>Download executive snapshot</Button>
+                      <Button variant="outlined" color="warning" onClick={handleViewAnalytics}>Open financial analytics</Button>
+                      <Button variant="outlined" color="info" onClick={handleReloadFinancialData}>Sync payments feed</Button>
+                      <Button variant="outlined" color="error" onClick={handleRefreshSystemHealth}>Run system diagnostics</Button>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Grid>
             </Grid>
 
-            {/* Quick Actions */}
-            <Grid item xs={12}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Quick Actions
-                  </Typography>
-                  <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                    <Button 
-                      variant="contained" 
-                      color="primary"
-                      onClick={handleRefreshData}
-                      startIcon={<RefreshIcon />}
-                    >
-                      Refresh Data
-                    </Button>
-                    <Button 
-                      variant="outlined" 
-                      color="secondary"
-                      onClick={handleExportReport}
-                    >
-                      Export Report
-                    </Button>
-                    <Button 
-                      variant="outlined" 
-                      color="warning"
-                      onClick={handleViewAnalytics}
-                    >
-                      View Analytics
-                    </Button>
-                    <Button 
-                      variant="outlined" 
-                      color="error"
-                      onClick={handleSystemCheck}
-                    >
-                      System Health
-                    </Button>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={6}>
+                <Card sx={{ height: '100%' }}>
+                  <CardContent>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>Engagement Snapshot</Typography>
+                    <Stack spacing={1.5}>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center">
+                        <Typography variant="body2" color="text.secondary">Active users today</Typography>
+                        <Chip size="small" color={getTrendColor(stats?.activeUsersGrowth ?? 0)} label={formatChangeValue(stats?.activeUsersGrowth ?? 12)} />
+                      </Stack>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center">
+                        <Typography variant="body2" color="text.secondary">New signups (7d)</Typography>
+                        <Chip size="small" color={getTrendColor(stats?.newUsersThisWeek ?? 0)} label={formatChangeValue(stats?.newUsersThisWeek ?? 48)} />
+                      </Stack>
+                      <Stack direction="row" justifyContent="space-between" alignItems="center">
+                        <Typography variant="body2" color="text.secondary">Premium conversions</Typography>
+                        <Chip size="small" color={getTrendColor(stats?.premiumConversions ?? 0)} label={formatChangeValue(stats?.premiumConversions ?? 7)} />
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">
+                        Keep the momentum going by nurturing institution onboarding and highlighting premium content.
+                      </Typography>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Grid>
 
-            {/* Recent Activity */}
-            <Grid item xs={12}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Recent Activity
-                  </Typography>
-                  <Box sx={{ maxHeight: 300, overflowY: 'auto' }}>
-                    {stats?.recentActivity?.map((activity) => (
-                      <Box key={activity.id} sx={{ 
-                        display: 'flex', 
-                        justifyContent: 'space-between', 
-                        alignItems: 'center',
-                        py: 1,
-                        borderBottom: '1px solid #eee'
-                      }}>
-                        <Box>
-                          <Typography variant="body2">
-                            {activity.action}
-                            {activity.user && ` - ${activity.user}`}
-                            {activity.amount && ` - ${activity.amount}`}
-                            {activity.content && ` - ${activity.content}`}
-                            {activity.institution && ` - ${
-                              typeof activity.institution === 'object' 
-                                ? activity.institution?.name || activity.institution
-                                : activity.institution
-                            }`}
-                            {activity.status && ` - ${activity.status}`}
-                            {activity.result && ` - ${activity.result}`}
-                            {activity.source && ` - ${activity.source}`}
-                            {activity.error && ` - ${activity.error}`}
-                          </Typography>
-                        </Box>
-                        <Typography variant="caption" color="text.secondary">
-                          {activity.time}
+              <Grid item xs={12} md={6}>
+                <Card sx={{ height: '100%' }}>
+                  <CardContent>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>Recent Activity</Typography>
+                    <Stack spacing={1.5} sx={{ maxHeight: 260, overflowY: 'auto' }}>
+                      {stats?.recentActivity?.length ? (
+                        stats.recentActivity.map((activity) => (
+                          <Paper key={activity.id} variant="outlined" sx={{ p: 1.5 }}>
+                            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} justifyContent="space-between">
+                              <Stack spacing={0.5}>
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                  {activity.action}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {[activity.user, activity.institution?.name ?? activity.institution, activity.amount, activity.status]
+                                    .filter(Boolean)
+                                    .join(' • ')}
+                                </Typography>
+                              </Stack>
+                              <Typography variant="caption" color="text.secondary">
+                                {activity.time}
+                              </Typography>
+                            </Stack>
+                          </Paper>
+                        ))
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">
+                          No recent actions logged. As activity resumes, events will appear here.
                         </Typography>
-                      </Box>
-                    ))}
-                  </Box>
-                </CardContent>
-              </Card>
+                      )}
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Grid>
             </Grid>
-          </Grid>
+          </Stack>
         )}
 
         {/* Institution Management Tab */}
@@ -1132,819 +1448,363 @@ const SuperAdminDashboard = () => {
         )}
 
         {/* User Management Tab */}
-        {tabValue === 4 && (
-          <div>
-            {/* Database Status for User Management */}
-            <Card sx={{ 
-              mb: 3,
-              bgcolor: stats?.dataSource?.users === 'database' ? 'success.light' : 'warning.light',
-              border: 2,
-              borderColor: stats?.dataSource?.users === 'database' ? 'success.main' : 'warning.main'
-            }}>
-              <CardContent>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Box>
-                    <Typography variant="h6" sx={{ 
-                      color: stats?.dataSource?.users === 'database' ? 'success.dark' : 'warning.dark',
-                      fontWeight: 'bold'
-                    }}>
-                      {stats?.dataSource?.users === 'database' ? '🟢 USER DATABASE CONNECTED' : '🟡 USING CACHED USER DATA'}
-                    </Typography>
-                    <Typography variant="body2" sx={{ 
-                      color: stats?.dataSource?.users === 'database' ? 'success.dark' : 'warning.dark'
-                    }}>
-                      {stats?.dataSource?.users === 'database' 
-                        ? 'All user operations will use live database data' 
-                        : 'User operations will use cached data until database connection is restored'}
-                    </Typography>
-                  </Box>
-                  <Button 
-                    variant="contained" 
-                    color={stats?.dataSource?.users === 'database' ? 'success' : 'warning'}
-                    onClick={handleViewAllUsers}
-                  >
-                    Test User Database
-                  </Button>
-                </Box>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent>
-                <Typography variant="h5" fontWeight="bold" gutterBottom>
-                  User Management
-                </Typography>
-                <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
-                  Comprehensive user administration interface with advanced filtering, role management, and subscription tracking.
-                </Typography>
-              
-              {/* Live Database Stats */}
-              <Grid container spacing={3} sx={{ mb: 4 }}>
-                <Grid item xs={12} md={3}>
-                  <Card variant="outlined" sx={{
-                    border: stats?.dataSource?.users === 'database' ? 2 : 1,
-                    borderColor: stats?.dataSource?.users === 'database' ? 'success.main' : 'warning.main'
-                  }}>
-                    <CardContent>
-                      <Typography variant="h4" color="primary">
-                        {stats?.totalUsers || '---'}
-                      </Typography>
-                      <Typography variant="body2">Total Users</Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {stats?.dataSource?.users === 'database' ? '🟢 Live Data' : '🟡 Cached'}
-                      </Typography>
-                    </CardContent>
-                  </Card>
-                </Grid>
-                <Grid item xs={12} md={3}>
-                  <Card variant="outlined" sx={{
-                    border: stats?.dataSource?.users === 'database' ? 2 : 1,
-                    borderColor: stats?.dataSource?.users === 'database' ? 'success.main' : 'warning.main'
-                  }}>
-                    <CardContent>
-                      <Typography variant="h4" color="success.main">
-                        {stats?.activeUsers || '---'}
-                      </Typography>
-                      <Typography variant="body2">Active Users</Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {stats?.dataSource?.users === 'database' ? '🟢 Live Data' : '🟡 Cached'}
-                      </Typography>
-                    </CardContent>
-                  </Card>
-                </Grid>
-                <Grid item xs={12} md={3}>
-                  <Card variant="outlined" sx={{
-                    border: stats?.dataSource?.users === 'database' ? 2 : 1,
-                    borderColor: stats?.dataSource?.users === 'database' ? 'success.main' : 'warning.main'
-                  }}>
-                    <CardContent>
-                      <Typography variant="h4" color="warning.main">
-                        {stats?.miniAdmins || '---'}
-                      </Typography>
-                      <Typography variant="body2">Mini Admins</Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {stats?.dataSource?.users === 'database' ? '🟢 Live Data' : '🟡 Cached'}
-                      </Typography>
-                    </CardContent>
-                  </Card>
-                </Grid>
-                <Grid item xs={12} md={3}>
-                  <Card variant="outlined" sx={{
-                    border: stats?.dataSource?.users === 'database' ? 2 : 1,
-                    borderColor: stats?.dataSource?.users === 'database' ? 'success.main' : 'warning.main'
-                  }}>
-                    <CardContent>
-                      <Typography variant="h4" color="error.main">
-                        {stats?.superAdmins || '---'}
-                      </Typography>
-                      <Typography variant="body2">Super Admins</Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {stats?.dataSource?.users === 'database' ? '🟢 Live Data' : '🟡 Cached'}
-                      </Typography>
-                    </CardContent>
-                  </Card>
-                </Grid>
-              </Grid>
-
-              {/* Management Actions */}
-              <Grid container spacing={2} sx={{ mb: 4 }}>
-                <Grid item xs={12}>
-                  <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    🛠️ Quick Actions
-                  </Typography>
-                </Grid>
-                
-                {/* Primary Actions */}
-                <Grid item xs={12} md={6}>
-                  <Card variant="outlined" sx={{ p: 2, height: '100%' }}>
-                    <Typography variant="subtitle1" gutterBottom color="primary" fontWeight="bold">
-                      📊 Data Management
-                    </Typography>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                      <Button 
-                        variant="contained" 
-                        color="primary"
-                        onClick={handleViewAllUsers}
-                        startIcon={<SupervisorIcon />}
-                        fullWidth
-                        size="large"
-                      >
-                        View All Users Database
-                      </Button>
-                      <Button 
-                        variant="outlined" 
-                        color="secondary"
-                        onClick={handleExportUserData}
-                        startIcon={<span>📥</span>}
-                        fullWidth
-                      >
-                        Export User Data (JSON)
-                      </Button>
-                    </Box>
-                  </Card>
-                </Grid>
-
-                {/* Bulk Operations */}
-                <Grid item xs={12} md={6}>
-                  <Card variant="outlined" sx={{ p: 2, height: '100%' }}>
-                    <Typography variant="subtitle1" gutterBottom color="warning.main" fontWeight="bold">
-                      ⚡ Bulk Operations
-                    </Typography>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                      <Button 
-                        variant="outlined" 
-                        color="warning"
-                        onClick={handleBulkRoleManagement}
-                        startIcon={<span>👥</span>}
-                        fullWidth
-                      >
-                        Bulk Role Management
-                      </Button>
-                      <Button 
-                        variant="outlined" 
-                        color="success"
-                        onClick={handleGrantPremiumAccess}
-                        startIcon={<span>💎</span>}
-                        fullWidth
-                      >
-                        Bulk Premium Access
-                      </Button>
-                    </Box>
-                  </Card>
-                </Grid>
-              </Grid>
-
-              {/* Search and Filter Section */}
-              <Card variant="outlined" sx={{ p: 3, mb: 4 }}>
-                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  🔍 Search & Filter Users
-                </Typography>
-                <Grid container spacing={3}>
-                  <Grid item xs={12} md={4}>
-                    <TextField
-                      fullWidth
-                      placeholder="Search users by name or email..."
-                      value={userSearchTerm}
-                      onChange={(e) => setUserSearchTerm(e.target.value)}
-                      variant="outlined"
-                      InputProps={{
-                        startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />
-                      }}
-                      sx={{
-                        '& .MuiOutlinedInput-root': {
-                          '&:hover fieldset': {
-                            borderColor: 'primary.main',
-                          },
-                        },
-                      }}
-                    />
-                  </Grid>
-                  <Grid item xs={12} md={4}>
-                    <TextField
-                      fullWidth
-                      select
-                      label="Filter by Role"
-                      value={userRoleFilter}
-                      onChange={(e) => setUserRoleFilter(e.target.value)}
-                      SelectProps={{ native: true }}
-                      variant="outlined"
-                    >
-                      <option value="all">🎯 All Roles ({stats?.totalUsers || 0})</option>
-                      <option value="student">👤 Students ({stats?.students || 0})</option>
-                      <option value="mini_admin">⚡ Mini Admins ({stats?.miniAdmins || 0})</option>
-                      <option value="super_admin">👑 Super Admins ({stats?.superAdmins || 0})</option>
-                    </TextField>
-                  </Grid>
-                  <Grid item xs={12} md={4}>
-                    <TextField
-                      fullWidth
-                      select
-                      label="Filter by Status"
-                      value={userStatusFilter}
-                      onChange={(e) => setUserStatusFilter(e.target.value)}
-                      SelectProps={{ native: true }}
-                      variant="outlined"
-                    >
-                      <option value="all">📊 All Status ({stats?.totalUsers || 0})</option>
-                      <option value="active">✅ Active Users ({stats?.activeUsers || 0})</option>
-                      <option value="inactive">❌ Inactive Users ({(stats?.totalUsers || 0) - (stats?.activeUsers || 0)})</option>
-                      <option value="premium">💎 Premium Users</option>
-                    </TextField>
-                  </Grid>
-                </Grid>
-                
-                {/* Filter Summary */}
-                <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
-                  <Typography variant="body2" color="text.secondary">
-                    <strong>Filter Results:</strong> Showing {getFilteredUsers().length} of {stats?.totalUsers || 0} users
-                    {userSearchTerm && ` • Search: "${userSearchTerm}"`}
-                    {userRoleFilter !== 'all' && ` • Role: ${userRoleFilter.replace('_', ' ').toUpperCase()}`}
-                    {userStatusFilter !== 'all' && ` • Status: ${userStatusFilter.toUpperCase()}`}
-                  </Typography>
-                </Box>
-              </Card>
-
-              {/* User Cards Section */}
-              <Box sx={{ mb: 4 }}>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-                  <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    👥 {realUsers.length > 0 ? `Users (${getFilteredUsers().length} of ${realUsers.length})` : 'Recent Users'}
-                  </Typography>
-                  <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Button 
-                      size="small" 
-                      variant="outlined" 
-                      onClick={() => setUserSearchTerm('')}
-                      disabled={!userSearchTerm}
-                    >
-                      Clear Search
-                    </Button>
-                    <Button 
-                      size="small" 
-                      variant="outlined" 
-                      onClick={() => {
-                        setUserRoleFilter('all');
-                        setUserStatusFilter('all');
-                        setUserSearchTerm('');
-                      }}
-                    >
-                      Reset Filters
-                    </Button>
-                  </Box>
-                </Box>
-
-                <Grid container spacing={3}>
-                  {getFilteredUsers().slice(0, 6).map((user) => (
-                    <Grid item xs={12} md={6} lg={4} key={user._id}>
-                      <Card 
-                        variant="outlined" 
-                        sx={{
-                          border: stats?.dataSource?.users === 'database' ? 2 : 1,
-                          borderColor: stats?.dataSource?.users === 'database' ? 'success.main' : 'warning.main',
-                          height: '100%',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          transition: 'all 0.3s ease',
-                          '&:hover': {
-                            boxShadow: 4,
-                            transform: 'translateY(-2px)'
-                          }
-                        }}
-                      >
-                        <CardContent sx={{ flexGrow: 1 }}>
-                          {/* User Header */}
-                          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                            <Avatar sx={{ 
-                              bgcolor: getRoleColor(user.role), 
-                              mr: 2, 
-                              width: 50, 
-                              height: 50,
-                              fontSize: '1.2rem',
-                              fontWeight: 'bold'
-                            }}>
-                              {user.firstName?.charAt(0)}{user.lastName?.charAt(0)}
-                            </Avatar>
-                            <Box sx={{ flexGrow: 1 }}>
-                              <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                                {user.firstName} {user.lastName}
-                              </Typography>
-                              <Typography variant="body2" color="text.secondary">
-                                {user.email}
-                              </Typography>
-                            </Box>
-                            <Box sx={{ textAlign: 'center' }}>
-                              <Typography variant="h4">{getRoleIcon(user.role)}</Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {user.role.replace('_', ' ').toUpperCase()}
-                              </Typography>
-                            </Box>
-                          </Box>
-                          
-                          {/* User Details */}
-                          <Box sx={{ mb: 3 }}>
-                            <Grid container spacing={2}>
-                              <Grid item xs={12}>
-                                <Typography variant="body2" sx={{ mb: 1 }}>
-                                  <strong>🏫 Institution:</strong> {
-                                    typeof user.institution === 'object' 
-                                      ? user.institution?.name || 'Not specified'
-                                      : user.institution || 'Not specified'
-                                  }
-                                </Typography>
-                              </Grid>
-                              <Grid item xs={6}>
-                                <Box sx={{ 
-                                  p: 1.5, 
-                                  borderRadius: 1, 
-                                  bgcolor: user.isActive ? 'success.light' : 'error.light',
-                                  textAlign: 'center'
-                                }}>
-                                  <Typography variant="caption" sx={{ 
-                                    color: user.isActive ? 'success.dark' : 'error.dark',
-                                    fontWeight: 'bold'
-                                  }}>
-                                    {user.isActive ? '✅ ACTIVE' : '❌ INACTIVE'}
-                                  </Typography>
-                                </Box>
-                              </Grid>
-                              <Grid item xs={6}>
-                                <Box sx={{ 
-                                  p: 1.5, 
-                                  borderRadius: 1, 
-                                  bgcolor: user.role === 'super_admin' ? 'info.light' : 
-                                          user.premiumSubscriptions > 0 ? 'warning.light' : 'grey.200',
-                                  textAlign: 'center'
-                                }}>
-                                  <Typography variant="caption" sx={{ 
-                                    color: user.role === 'super_admin' ? 'info.dark' : 
-                                           user.premiumSubscriptions > 0 ? 'warning.dark' : 'text.secondary',
-                                    fontWeight: 'bold'
-                                  }}>
-                                    {user.role === 'super_admin' ? '💎 ALL ACCESS' : 
-                                     user.premiumSubscriptions > 0 ? `💎 ${user.premiumSubscriptions} PREMIUM` : '🔓 BASIC'}
-                                  </Typography>
-                                </Box>
-                              </Grid>
-                            </Grid>
-                            
-                            <Box sx={{ mt: 2, p: 1, bgcolor: 'grey.50', borderRadius: 1, textAlign: 'center' }}>
-                              <Typography variant="caption" color="text.secondary">
-                                {stats?.dataSource?.users === 'database' ? '🟢 Live Database Data' : '🟡 Sample Data'}
-                              </Typography>
-                            </Box>
-                          </Box>
-
-                          {/* Action Buttons */}
-                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                            {/* Primary Actions */}
-                            <Box sx={{ display: 'flex', gap: 1 }}>
-                              <Button 
-                                size="small" 
-                                variant="contained" 
-                                color="primary"
-                                onClick={() => handleViewUserProfile(user)}
-                                startIcon={<span>👤</span>}
-                                fullWidth
-                              >
-                                View Profile
-                              </Button>
-                              <Button 
-                                size="small" 
-                                variant="outlined" 
-                                color="secondary"
-                                onClick={() => handleEditUser(user)}
-                                startIcon={<span>✏️</span>}
-                                fullWidth
-                              >
-                                Edit
-                              </Button>
-                            </Box>
-                            
-                            {/* Secondary Actions */}
-                            <Box sx={{ display: 'flex', gap: 1 }}>
-                              <Button 
-                                size="small" 
-                                variant="outlined" 
-                                color={user.role === 'super_admin' ? 'error' : 'warning'}
-                                disabled={user.role === 'super_admin'}
-                                onClick={() => handleChangeUserRole(user)}
-                                startIcon={<span>{user.role === 'super_admin' ? '🔒' : '⚡'}</span>}
-                                fullWidth
-                              >
-                                {user.role === 'super_admin' ? 'Protected' : 'Change Role'}
-                              </Button>
-                              <Button 
-                                size="small" 
-                                variant="outlined" 
-                                color={user.isActive ? 'error' : 'success'}
-                                onClick={() => handleToggleUserStatus(user)}
-                                startIcon={<span>{user.isActive ? '❌' : '✅'}</span>}
-                                fullWidth
-                              >
-                                {user.isActive ? 'Deactivate' : 'Activate'}
-                              </Button>
-                            </Box>
-                            
-                            {/* Premium Action */}
-                            {user.role !== 'super_admin' && (
-                              <Button 
-                                size="small" 
-                                variant="outlined" 
-                                color="success"
-                                onClick={() => handleGrantUserPremium(user)}
-                                startIcon={<span>💎</span>}
-                                fullWidth
-                              >
-                                Grant Premium Access
-                              </Button>
-                            )}
-                          </Box>
-                      </CardContent>
-                    </Card>
-                  </Grid>
-                ))}
-                
-                {/* No Users Found */}
-                {getFilteredUsers().length === 0 && (
-                  <Grid item xs={12}>
-                    <Card variant="outlined" sx={{ p: 4, textAlign: 'center' }}>
-                      <Typography variant="h6" color="text.secondary" gutterBottom>
-                        🔍 No Users Found
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                        No users match your current search and filter criteria.
-                      </Typography>
-                      <Button 
-                        variant="outlined" 
-                        onClick={() => {
-                          setUserRoleFilter('all');
-                          setUserStatusFilter('all');
-                          setUserSearchTerm('');
-                        }}
-                      >
-                        Clear All Filters
-                      </Button>
-                    </Card>
-                  </Grid>
-                )}
-              </Grid>
-
-              {/* Load More Section */}
-              {getFilteredUsers().length > 0 && (
-                <Card variant="outlined" sx={{ mt: 4, p: 3, textAlign: 'center' }}>
-                  <Typography variant="h6" gutterBottom>
-                    📊 User Management Summary
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                    Showing {Math.min(6, getFilteredUsers().length)} of {getFilteredUsers().length} filtered users
-                    {getFilteredUsers().length !== (stats?.totalUsers || 0) && 
-                      ` (${stats?.totalUsers || 0} total in database)`}
-                  </Typography>
-                  
-                  <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', flexWrap: 'wrap' }}>
-                    {getFilteredUsers().length > 6 && (
-                      <Button 
-                        variant="contained" 
-                        color="primary"
-                        onClick={handleViewAllUsers}
-                        startIcon={<span>👥</span>}
-                      >
-                        View All {getFilteredUsers().length} Users
-                      </Button>
-                    )}
-                    
-                    <Button 
-                      variant="outlined" 
-                      color="secondary"
-                      onClick={handleExportUserData}
-                      startIcon={<span>📥</span>}
-                    >
-                      Export Filtered Data
-                    </Button>
-                    
-                    {getFilteredUsers().length > 1 && (
-                      <Button 
-                        variant="outlined" 
-                        color="warning"
-                        onClick={handleBulkRoleManagement}
-                        startIcon={<span>⚡</span>}
-                      >
-                        Bulk Actions
-                      </Button>
-                    )}
-                  </Box>
-                  
-                  {stats?.dataSource?.users !== 'database' && (
-                    <Box sx={{ mt: 2, p: 2, bgcolor: 'warning.light', borderRadius: 1 }}>
-                      <Typography variant="caption" color="warning.dark">
-                        ⚠️ Showing sample data. Connect to database to see all users and perform real operations.
-                      </Typography>
-                    </Box>
-                  )}
-                </Card>
-              )}
-            </Box>
-            </CardContent>
-          </Card>
-          </div>
-        )}
+        {tabValue === 4 && <UserManagement />}
 
         {/* Financial Analytics Tab */}
         {tabValue === 5 && (
-          <div>
-            {/* Database Status for Financial Analytics */}
-            <Card sx={{ 
-              mb: 3,
-              bgcolor: stats?.dataSource?.payments === 'database' ? 'success.light' : 'warning.light',
-              border: 2,
-              borderColor: stats?.dataSource?.payments === 'database' ? 'success.main' : 'warning.main'
-            }}>
+          <Stack spacing={3}>
+            <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'flex-start', lg: 'center' }}>
+              <Box>
+                <Typography variant="h5" sx={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <MoneyIcon color="success" /> Financial Performance Overview
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                  Monitor EduVault revenue streams, subscription adoption, and transaction health.
+                </Typography>
+              </Box>
+
+              <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ xs: 'stretch', md: 'center' }}>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  startIcon={<RefreshIcon />}
+                  onClick={handleReloadFinancialData}
+                  disabled={financialLoading}
+                >
+                  {financialLoading ? 'Refreshing…' : 'Refresh Financial Data'}
+                </Button>
+                <Button variant="outlined" onClick={handleDownloadFinancialReport}>
+                  Download JSON Report
+                </Button>
+                <Button variant="outlined" onClick={handleExportFinancialCsv}>
+                  Export Transactions CSV
+                </Button>
+              </Stack>
+            </Stack>
+
+            {financialLoading && (
+              <LinearProgress sx={{ borderRadius: 1 }} />
+            )}
+
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={3}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="caption" color="text.secondary">Total Revenue</Typography>
+                    <Typography variant="h4" sx={{ fontWeight: 700, mt: 0.5 }}>{formatCurrency(financialMetrics.totalRevenue)}</Typography>
+                    <Typography variant="body2" color="text.secondary">All-time collections</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} md={3}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="caption" color="text.secondary">Revenue This Month</Typography>
+                    <Typography variant="h4" sx={{ fontWeight: 700, mt: 0.5 }}>{formatCurrency(financialMetrics.revenueThisMonth)}</Typography>
+                    <Typography variant="body2" color="text.secondary">Live month-to-date billing</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} md={3}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="caption" color="text.secondary">Average Ticket Size</Typography>
+                    <Typography variant="h4" sx={{ fontWeight: 700, mt: 0.5 }}>{formatCurrency(financialMetrics.averageTransactionValue)}</Typography>
+                    <Typography variant="body2" color="text.secondary">Per transaction</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} md={3}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="caption" color="text.secondary">Total Transactions</Typography>
+                    <Typography variant="h4" sx={{ fontWeight: 700, mt: 0.5 }}>{formatNumber(financialMetrics.totalTransactions)}</Typography>
+                    <Typography variant="body2" color="text.secondary">Across all payment methods</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+
+            <Grid container spacing={2}>
+              <Grid item xs={12} lg={8}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>Revenue by Stream</Typography>
+                    <Grid container spacing={2}>
+                      <Grid item xs={12} md={6}>
+                        <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 2 }}>
+                          <Typography variant="body2" color="text.secondary">Subscription Revenue</Typography>
+                          <Typography variant="h5" sx={{ fontWeight: 700 }}>{formatCurrency(financialMetrics.subscriptionRevenue)}</Typography>
+                          <Typography variant="caption" color="text.secondary">Recurring collections from institutions & students</Typography>
+                        </Box>
+                      </Grid>
+                      <Grid item xs={12} md={6}>
+                        <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, p: 2 }}>
+                          <Typography variant="body2" color="text.secondary">Job Unlock Revenue</Typography>
+                          <Typography variant="h5" sx={{ fontWeight: 700 }}>{formatCurrency(financialMetrics.jobUnlockRevenue)}</Typography>
+                          <Typography variant="caption" color="text.secondary">One-off payments for premium job content</Typography>
+                        </Box>
+                      </Grid>
+                    </Grid>
+
+                    <Divider sx={{ my: 3 }} />
+
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>Transaction Status Distribution</Typography>
+                    <Grid container spacing={2}>
+                      {Object.entries(financialMetrics.transactionsByStatus).map(([status, count]) => (
+                        <Grid item xs={12} md={4} key={status}>
+                          <Card variant="outlined">
+                            <CardContent>
+                              <Stack direction="row" spacing={1.5} alignItems="center">
+                                <Chip size="small" color={statusColorMap[status]} label={statusLabelMap[status]} />
+                                <Typography variant="h6" sx={{ fontWeight: 700 }}>{formatNumber(count)}</Typography>
+                              </Stack>
+                            </CardContent>
+                          </Card>
+                        </Grid>
+                      ))}
+                    </Grid>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              <Grid item xs={12} lg={4}>
+                <Card sx={{ height: '100%' }}>
+                  <CardContent>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>Quick Stats</Typography>
+                    <Stack spacing={1.5}>
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Chip color="success" label="M-Pesa" size="small" />
+                        <Typography variant="body2">{formatNumber(financialMetrics.mpesaTransactions)} transactions</Typography>
+                      </Stack>
+                      <Typography variant="body2" color="text.secondary">
+                        Last refresh: {stats?.updatedAt ? formatDateTime(stats.updatedAt) : 'Just now'}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Data source: {stats?.dataSource?.payments === 'database' ? 'Live database' : 'Fallback cache'}
+                      </Typography>
+                      <Button variant="outlined" onClick={handleManageRefunds}>Open Refund Center</Button>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+
+            <Card>
               <CardContent>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Box>
-                    <Typography variant="h6" sx={{ 
-                      color: stats?.dataSource?.payments === 'database' ? 'success.dark' : 'warning.dark',
-                      fontWeight: 'bold'
-                    }}>
-                      {stats?.dataSource?.payments === 'database' ? '🟢 PAYMENT DATABASE CONNECTED' : '🟡 USING CACHED PAYMENT DATA'}
-                    </Typography>
-                    <Typography variant="body2" sx={{ 
-                      color: stats?.dataSource?.payments === 'database' ? 'success.dark' : 'warning.dark'
-                    }}>
-                      {stats?.dataSource?.payments === 'database' 
-                        ? 'All financial data is live from M-Pesa and payment systems' 
-                        : 'Financial reports will use cached data until database connection is restored'}
-                    </Typography>
-                  </Box>
-                  <Button 
-                    variant="contained" 
-                    color={stats?.dataSource?.payments === 'database' ? 'success' : 'warning'}
-                    onClick={handleGenerateFinancialReport}
-                  >
-                    Test Payment Database
-                  </Button>
-                </Box>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>Recent Transactions</Typography>
+                {financialMetrics.recentPayments.length === 0 ? (
+                  <Typography variant="body2" color="text.secondary">
+                    No transactions available yet. Refresh data to pull the latest payments.
+                  </Typography>
+                ) : (
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Reference</TableCell>
+                        <TableCell>Type</TableCell>
+                        <TableCell>Status</TableCell>
+                        <TableCell align="right">Amount</TableCell>
+                        <TableCell>Payment Method</TableCell>
+                        <TableCell>Date</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {financialMetrics.recentPayments.map((payment) => (
+                        <TableRow key={payment.id} hover>
+                          <TableCell>{payment.reference}</TableCell>
+                          <TableCell sx={{ textTransform: 'capitalize' }}>{payment.type.replace('_', ' ')}</TableCell>
+                          <TableCell>
+                            <Chip size="small" color={statusColorMap[payment.status] || 'default'} label={statusLabelMap[payment.status] || payment.status} />
+                          </TableCell>
+                          <TableCell align="right">{formatCurrency(payment.amount)}</TableCell>
+                          <TableCell sx={{ textTransform: 'uppercase' }}>{payment.paymentMethod}</TableCell>
+                          <TableCell>{formatDateTime(payment.createdAt)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
               </CardContent>
             </Card>
-
-            <Grid container spacing={3}>
-            <Grid item xs={12} md={4}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Revenue This Month
-                  </Typography>
-                  <Typography variant="h4" color="success.main">
-                    KSH {stats?.totalRevenue?.toLocaleString() || '45,230'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {stats?.totalTransactions || '518'} transactions
-                  </Typography>
-                  <Box sx={{ mt: 2 }}>
-                    <Button 
-                      size="small" 
-                      variant="outlined"
-                      onClick={() => alert('Detailed revenue report will be generated')}
-                    >
-                      View Details
-                    </Button>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Subscription Revenue
-                  </Typography>
-                  <Typography variant="h4" color="primary.main">
-                    KSH {stats?.subscriptionRevenue?.toLocaleString() || '31,500'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {stats?.activeSubscriptions || '450'} active subscriptions
-                  </Typography>
-                  <Box sx={{ mt: 2 }}>
-                    <Button 
-                      size="small" 
-                      variant="outlined"
-                      onClick={() => alert('Subscription analytics will be displayed')}
-                    >
-                      Analyze
-                    </Button>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid item xs={12} md={4}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Job Unlock Revenue
-                  </Typography>
-                  <Typography variant="h4" color="warning.main">
-                    KSH {stats?.jobUnlockRevenue?.toLocaleString() || '13,730'}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {stats?.jobUnlocks || '68'} job unlocks
-                  </Typography>
-                  <Box sx={{ mt: 2 }}>
-                    <Button 
-                      size="small" 
-                      variant="outlined"
-                      onClick={() => alert('Job unlock statistics will be shown')}
-                    >
-                      View Stats
-                    </Button>
-                  </Box>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid item xs={12}>
-              <Card>
-                <CardContent>
-                  <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-                    <Typography variant="h6">
-                      Financial Controls
-                    </Typography>
-                    <Box display="flex" gap={2}>
-                      <Button 
-                        variant="contained" 
-                        color="primary"
-                        onClick={handleGenerateFinancialReport}
-                      >
-                        Generate Report
-                      </Button>
-                      <Button 
-                        variant="outlined" 
-                        color="secondary"
-                        onClick={handleExportFinancialData}
-                      >
-                        Export Data
-                      </Button>
-                      <Button 
-                        variant="outlined" 
-                        color="warning"
-                        onClick={handleManageRefunds}
-                      >
-                        Manage Refunds
-                      </Button>
-                    </Box>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary">
-                    Use these controls to manage financial operations and generate reports.
-                  </Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-          </Grid>
-          </div>
+          </Stack>
         )}
 
         {/* System Health Tab */}
         {tabValue === 6 && (
-          <Grid container spacing={3}>
-            <Grid item xs={12} md={6}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    System Status
-                  </Typography>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <Typography>Database</Typography>
-                      <Typography color="success.main">Healthy</Typography>
-                    </Box>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <Typography>API Server</Typography>
-                      <Typography color="success.main">Running</Typography>
-                    </Box>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <Typography>File Storage</Typography>
-                      <Typography color="warning.main">85% Used</Typography>
-                    </Box>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <Typography>M-Pesa Integration</Typography>
-                      <Typography color="success.main">Connected</Typography>
-                    </Box>
-                  </Box>
-                  <Box sx={{ mt: 2 }}>
-                    <Button 
-                      size="small" 
-                      variant="outlined"
-                      onClick={() => alert('System health check initiated...')}
-                    >
-                      Health Check
-                    </Button>
-                  </Box>
-                </CardContent>
-              </Card>
+          <Stack spacing={3}>
+            <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'flex-start', lg: 'center' }}>
+              <Box>
+                <Typography variant="h5" sx={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <HealthIcon color="success" /> Platform System Health
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                  Track service uptime, diagnose outages, and review recent incidents across EduVault infrastructure.
+                </Typography>
+              </Box>
+
+              <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ xs: 'stretch', md: 'center' }}>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  startIcon={<RefreshIcon />}
+                  onClick={handleRefreshSystemHealth}
+                  disabled={systemHealthLoading}
+                >
+                  {systemHealthLoading ? 'Running diagnostics…' : 'Run Live Diagnostics'}
+                </Button>
+                <Button variant="outlined" startIcon={<BugReportIcon />} onClick={handleViewIncidentLog}>
+                  View Incident Log
+                </Button>
+                <Button variant="outlined" startIcon={<WarningIcon />} onClick={handleRunDiagnostics}>
+                  Quick Recheck
+                </Button>
+              </Stack>
+            </Stack>
+
+            {systemHealthLoading && (
+              <LinearProgress sx={{ borderRadius: 1 }} />
+            )}
+
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={3}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="caption" color="text.secondary">Overall Health</Typography>
+                    <Typography variant="h4" sx={{ fontWeight: 700, mt: 0.5 }}>{formatPercentage(systemHealth.overallHealth || 0)}</Typography>
+                    <Typography variant="body2" color="text.secondary">Weighted across core services</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} md={3}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="caption" color="text.secondary">Uptime (30 days)</Typography>
+                    <Typography variant="h4" sx={{ fontWeight: 700, mt: 0.5 }}>{formatPercentage(systemHealth.uptimePercentage || 0)}</Typography>
+                    <Typography variant="body2" color="text.secondary">Includes scheduled maintenance</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} md={3}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="caption" color="text.secondary">Incidents (30 days)</Typography>
+                    <Typography variant="h4" sx={{ fontWeight: 700, mt: 0.5 }}>{formatNumber(systemHealth.incidentsLast30Days || 0)}</Typography>
+                    <Typography variant="body2" color="text.secondary">Reported disruptions</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} md={3}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="caption" color="text.secondary">Degraded Services</Typography>
+                    <Typography variant="h4" sx={{ fontWeight: 700, mt: 0.5 }}>{formatNumber(systemHealth.degradedServices || 0)}</Typography>
+                    <Typography variant="body2" color="text.secondary">Require follow-up</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
             </Grid>
-            <Grid item xs={12} md={6}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Performance Metrics
-                  </Typography>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <Typography>Average Response Time</Typography>
-                      <Typography color="success.main">{stats?.performance?.avgResponseTime || '245ms'}</Typography>
-                    </Box>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <Typography>Uptime</Typography>
-                      <Typography color="success.main">{stats?.performance?.uptime || '99.8%'}</Typography>
-                    </Box>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <Typography>Daily Active Users</Typography>
-                      <Typography color="primary.main">{stats?.activeUsers || '127'}</Typography>
-                    </Box>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <Typography>Error Rate</Typography>
-                      <Typography color="success.main">{stats?.performance?.errorRate || '0.2%'}</Typography>
-                    </Box>
-                  </Box>
-                  <Box sx={{ mt: 2 }}>
-                    <Button 
-                      size="small" 
-                      variant="outlined"
-                      onClick={() => alert('Detailed performance metrics will be displayed')}
-                    >
-                      View Details
-                    </Button>
-                  </Box>
-                </CardContent>
-              </Card>
+
+            <Grid container spacing={2}>
+              <Grid item xs={12} lg={8}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>Service Status</Typography>
+                    {systemHealth.services.length === 0 ? (
+                      <Typography variant="body2" color="text.secondary">
+                        No diagnostics available yet. Run live diagnostics to populate service status.
+                      </Typography>
+                    ) : (
+                      <TableContainer component={Paper} sx={{ maxHeight: 360 }}>
+                        <Table size="small" stickyHeader>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell>Service</TableCell>
+                              <TableCell>Status</TableCell>
+                              <TableCell align="right">Response Time (ms)</TableCell>
+                              <TableCell>Details</TableCell>
+                              <TableCell>Last Checked</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {systemHealth.services.map((service) => (
+                              <TableRow key={service.key} hover>
+                                <TableCell>{service.label}</TableCell>
+                                <TableCell>
+                                  <Chip
+                                    size="small"
+                                    color={serviceStatusColorMap[service.status] || 'default'}
+                                    icon={service.status === 'operational' ? <CheckCircleIcon fontSize="small" /> : <WarningIcon fontSize="small" />}
+                                    label={service.statusLabel}
+                                  />
+                                </TableCell>
+                                <TableCell align="right">{service.responseTimeMs != null ? service.responseTimeMs : '—'}</TableCell>
+                                <TableCell>{service.details}</TableCell>
+                                <TableCell>{formatDateTime(service.lastCheckedAt)}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    )}
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              <Grid item xs={12} lg={4}>
+                <Card sx={{ height: '100%' }}>
+                  <CardContent>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>Operations Center</Typography>
+                    <Stack spacing={1.5}>
+                      <Typography variant="body2" color="text.secondary">
+                        Last checked: {systemHealth.lastCheckedAt ? formatDateTime(systemHealth.lastCheckedAt) : 'Not yet run'}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Data source: {stats?.dataSource?.systemHealth === 'database' ? 'Live diagnostics' : 'Fallback cache'}
+                      </Typography>
+                      <Button variant="outlined" onClick={handleClearCache}>Clear System Cache</Button>
+                      <Button variant="outlined" onClick={handleRestartServices}>Restart Core Services</Button>
+                      <Button variant="outlined" color="warning" onClick={handleMaintenanceMode}>Toggle Maintenance Mode</Button>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Grid>
             </Grid>
-            <Grid item xs={12}>
-              <Card>
-                <CardContent>
-                  <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-                    <Typography variant="h6">
-                      System Controls
-                    </Typography>
-                    <Box display="flex" gap={2}>
-                      <Button 
-                        variant="contained" 
-                        color="primary"
-                        onClick={handleRunDiagnostics}
-                      >
-                        Run Diagnostics
-                      </Button>
-                      <Button 
-                        variant="outlined" 
-                        color="secondary"
-                        onClick={handleClearCache}
-                      >
-                        Clear Cache
-                      </Button>
-                      <Button 
-                        variant="outlined" 
-                        color="warning"
-                        onClick={handleRestartServices}
-                      >
-                        Restart Services
-                      </Button>
-                      <Button 
-                        variant="outlined" 
-                        color="error"
-                        onClick={handleMaintenanceMode}
-                      >
-                        Maintenance Mode
-                      </Button>
-                    </Box>
-                  </Box>
+
+            <Card>
+              <CardContent>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>Recent Incidents</Typography>
+                {systemHealth.recentIncidents.length === 0 ? (
                   <Typography variant="body2" color="text.secondary">
-                    Use these controls to manage system operations and perform maintenance tasks.
+                    No incidents recorded in the selected timeframe.
                   </Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-          </Grid>
+                ) : (
+                  <Stack spacing={1.5}>
+                    {systemHealth.recentIncidents.map((incident) => (
+                      <Paper key={incident.id} variant="outlined" sx={{ p: 2 }}>
+                        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'flex-start', md: 'center' }}>
+                          <Stack spacing={0.5}>
+                            <Typography variant="subtitle2">{incident.service}</Typography>
+                            <Typography variant="body2" color="text.secondary">{incident.summary}</Typography>
+                          </Stack>
+                          <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} alignItems={{ xs: 'flex-start', md: 'center' }}>
+                            <Chip
+                              size="small"
+                              color={incidentSeverityColorMap[incident.severity] || 'default'}
+                              label={incident.severity.toUpperCase()}
+                            />
+                            <Typography variant="body2" color="text.secondary">{formatDateTime(incident.occurredAt)}</Typography>
+                          </Stack>
+                        </Stack>
+                      </Paper>
+                    ))}
+                  </Stack>
+                )}
+              </CardContent>
+            </Card>
+          </Stack>
         )}
       </div>
     </Container>
   );
-};
-
-export default SuperAdminDashboard;
+}

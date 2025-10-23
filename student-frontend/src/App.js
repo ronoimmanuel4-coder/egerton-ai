@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { QueryClient, QueryClientProvider } from 'react-query';
@@ -16,16 +16,19 @@ import { useAuth } from './contexts/AuthContext';
 
 // Lazy loaded pages for better performance (Student-only)
 import {
-  LazyHomePage,
+  // LazyHomePage,
   LazyLoginPage,
   LazyRegisterPage,
   LazyInstitutionPage,
   LazyCoursePage,
   LazyResourcesPage,
+  LazyDownloadsPage,
   LazyJobsPage,
   LazyProfilePage,
   PageLoader
 } from './utils/lazyComponents';
+import HomePage from './pages/HomePage';
+import AboutPage from './pages/AboutPage';
 
 // Test component for debugging
 import TestLoginPage from './pages/Auth/TestLoginPage';
@@ -210,6 +213,20 @@ function AuthRedirectListener() {
   return null;
 }
 
+function ScrollResetManager() {
+  const location = useLocation();
+
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      document.body.scrollTop = 0;
+      document.documentElement.scrollTop = 0;
+    });
+  }, [location.pathname, location.search]);
+
+  return null;
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -221,12 +238,14 @@ function App() {
               <Router>
               <div className="App" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
                 <AuthRedirectListener />
+                <ScrollResetManager />
                 <Navbar />
                 <main style={{ flex: 1 }}>
                   <Suspense fallback={<PageLoader />}>
                     <Routes>
                       {/* Public Routes */}
-                      <Route path="/" element={<LazyHomePage />} />
+                      <Route path="/" element={<HomePage />} />
+                      <Route path="/about" element={<AboutPage />} />
                       <Route path="/login" element={<LazyLoginPage />} />
                       <Route path="/test-login" element={<TestLoginPage />} />
                       <Route path="/register" element={<LazyRegisterPage />} />
@@ -245,6 +264,11 @@ function App() {
                       <Route path="/resources" element={
                         <ProtectedRoute>
                           <LazyResourcesPage />
+                        </ProtectedRoute>
+                      } />
+                      <Route path="/downloads" element={
+                        <ProtectedRoute>
+                          <LazyDownloadsPage />
                         </ProtectedRoute>
                       } />
                       <Route path="/jobs" element={

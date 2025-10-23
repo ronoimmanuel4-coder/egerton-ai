@@ -10,12 +10,14 @@ const api = axios.create({
   withCredentials: true,
 });
 
-// Add a request interceptor to ensure all requests use the baseURL
+// Add a request interceptor to log and debug requests
 api.interceptors.request.use(config => {
-  // If the URL doesn't start with http, prepend the baseURL
-  if (!config.url.startsWith('http') && !config.url.startsWith(process.env.REACT_APP_BACKEND_URL)) {
-    config.url = `${process.env.REACT_APP_BACKEND_URL}${config.url.startsWith('/') ? '' : '/'}${config.url}`;
-  }
+  console.log('🔍 API Request:', {
+    method: config.method?.toUpperCase(),
+    url: config.url,
+    baseURL: config.baseURL,
+    fullURL: config.baseURL ? `${config.baseURL}${config.url}` : config.url
+  });
   return config;
 });
 

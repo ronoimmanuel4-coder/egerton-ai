@@ -4,7 +4,7 @@ const { body, validationResult } = require('express-validator');
 const Payment = require('../models/Payment');
 const User = require('../models/User');
 const Job = require('../models/Job');
-const { auth } = require('../middleware/auth');
+const { auth, authorize } = require('../middleware/auth');
 const { notificationService } = require('../socket/socketHandler');
 const router = express.Router();
 
@@ -25,6 +25,39 @@ const getMpesaToken = async () => {
     throw new Error('Failed to get M-Pesa access token');
   }
 };
+
+// @route   GET /api/payments
+// @desc    Get all payments for super admin dashboards
+// @access  Private (Super Admin only)
+router.get('/', [
+  auth,
+  authorize('super_admin')
+], async (req, res) => {
+  try {
+    const { limit = 200, skip = 0, status } = req.query;
+
+    const query = {};
+    if (status && ['pending', 'completed', 'failed', 'cancelled', 'refunded'].includes(status)) {
+      query.status = status;
+    }
+
+    const total = await Payment.countDocuments(query);
+    const payments = await Payment.find(query)
+      .populate('user', 'firstName lastName email role')
+      .sort({ createdAt: -1 })
+      .skip(Number(skip))
+      .limit(Math.min(Number(limit), 500))
+      .lean();
+
+    res.json({
+      payments,
+      total
+    });
+  } catch (error) {
+    console.error('Admin payments fetch error:', error);
+    res.status(500).json({ message: 'Failed to fetch payments' });
+  }
+});
 
 // @route   POST /api/payments/subscription
 // @desc    Initiate subscription payment

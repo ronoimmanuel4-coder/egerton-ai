@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -15,7 +15,8 @@ import {
   List,
   ListItem,
   ListItemIcon,
-  ListItemText
+  ListItemText,
+  MenuItem
 } from '@mui/material';
 import {
   Payment,
@@ -35,6 +36,12 @@ const SubscriptionDialog = ({
   courseId, 
   courseName, 
   year, 
+  unitCode,
+  unitName,
+  semester,
+  availableYears = [],
+  periodLabelSingular = 'Semester',
+  periodsByYear = {},
   onSubscriptionSuccess 
 }) => {
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -42,6 +49,27 @@ const SubscriptionDialog = ({
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [paymentInitiated, setPaymentInitiated] = useState(false);
+  const [selectedYear, setSelectedYear] = useState(() => Number(year) || 1);
+  const [selectedSemester, setSelectedSemester] = useState(() => semester || null);
+  const [notes, setNotes] = useState('');
+
+  const yearOptions = useMemo(() => {
+    const options = Array.isArray(availableYears) && availableYears.length > 0
+      ? availableYears
+      : [Number(year) || 1];
+    return options;
+  }, [availableYears, year]);
+
+  const periodOptionsForYear = useMemo(() => {
+    const resolvedYear = Number(selectedYear) || Number(year) || 1;
+    const periodList = periodsByYear?.[resolvedYear];
+    if (Array.isArray(periodList) && periodList.length > 0) {
+      return periodList;
+    }
+    return semester != null ? [semester] : [];
+  }, [periodsByYear, selectedYear, year, semester]);
+
+  const hasPeriodOptions = periodOptionsForYear.length > 0;
 
   const handlePayment = async () => {
     if (!phoneNumber || phoneNumber.length < 10) {
@@ -55,7 +83,11 @@ const SubscriptionDialog = ({
 
       const response = await api.post('/api/subscription/initiate', {
         courseId,
-        year: parseInt(year),
+        year: parseInt(selectedYear),
+        semester: selectedSemester != null ? Number(selectedSemester) : undefined,
+        unitCode: unitCode || undefined,
+        unitName: unitName || undefined,
+        notes: notes?.trim() || undefined,
         phoneNumber: phoneNumber.replace(/\D/g, '') // Remove non-digits
       });
 
@@ -145,6 +177,9 @@ const SubscriptionDialog = ({
     setError('');
     setSuccess('');
     setPaymentInitiated(false);
+    setSelectedYear(Number(year) || 1);
+    setSelectedSemester(semester || null);
+    setNotes('');
     setLoading(false);
     onClose();
   };
@@ -182,7 +217,7 @@ const SubscriptionDialog = ({
         <Box>
           <Typography variant="h6">Premium Subscription</Typography>
           <Typography variant="caption">
-            {courseName} - Year {year}
+            {courseName} - Year {selectedYear}
           </Typography>
         </Box>
       </DialogTitle>
@@ -218,8 +253,18 @@ const SubscriptionDialog = ({
               />
               
               <Typography variant="body2" color="text.secondary" gutterBottom>
-                Get premium access to Year {year} content for {courseName}
+                Get premium access to Year {selectedYear} content for {courseName}
               </Typography>
+              {unitCode && (
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                  Unit: {unitCode} {unitName ? `- ${unitName}` : ''}
+                </Typography>
+              )}
+              {selectedSemester && (
+                <Typography variant="body2" color="text.secondary">
+                  {periodLabelSingular} {selectedSemester}
+                </Typography>
+              )}
             </Box>
 
             <Divider sx={{ my: 2 }} />
@@ -268,6 +313,66 @@ const SubscriptionDialog = ({
             </List>
 
             <Divider sx={{ my: 2 }} />
+
+            {/* Eligibility Form */}
+            <Typography variant="h6" gutterBottom>
+              Eligibility Details:
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mb: 3 }}>
+              <TextField
+                select
+                fullWidth
+                label="Select Course Year"
+                value={selectedYear}
+                onChange={(e) => {
+                  const nextYear = Number(e.target.value);
+                  setSelectedYear(nextYear);
+                  const availablePeriods = periodsByYear?.[nextYear];
+                  if (Array.isArray(availablePeriods) && availablePeriods.length > 0) {
+                    setSelectedSemester(availablePeriods.includes(selectedSemester) ? selectedSemester : null);
+                  } else {
+                    setSelectedSemester(null);
+                  }
+                }}
+                helperText="Choose the course year you want to subscribe to"
+              >
+                {yearOptions.map((yearOption) => (
+                  <MenuItem key={yearOption} value={yearOption}>
+                    Year {yearOption}
+                  </MenuItem>
+                ))}
+              </TextField>
+
+              {hasPeriodOptions && (
+                <TextField
+                  select
+                  fullWidth
+                  label={`Select ${periodLabelSingular}`}
+                  value={selectedSemester ?? ''}
+                  onChange={(e) => setSelectedSemester(e.target.value ? Number(e.target.value) : null)}
+                  helperText={`Choose the ${periodLabelSingular.toLowerCase()} covered by this subscription`}
+                >
+                  <MenuItem value="">
+                    All {periodLabelSingular}s
+                  </MenuItem>
+                  {periodOptionsForYear.map((periodValue) => (
+                    <MenuItem key={periodValue} value={periodValue}>
+                      {periodLabelSingular} {periodValue}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              )}
+
+              <TextField
+                fullWidth
+                multiline
+                minRows={2}
+                label="Additional Notes (Optional)"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Specify any special circumstances or reference information"
+              />
+            </Box>
 
             {/* Payment Form */}
             <Typography variant="h6" gutterBottom>

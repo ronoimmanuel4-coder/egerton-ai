@@ -2,6 +2,7 @@ const express = require('express');
 const User = require('../models/User');
 const Subscription = require('../models/Subscription');
 const Course = require('../models/Course');
+const StudentDownload = require('../models/StudentDownload');
 const { auth } = require('../middleware/auth');
 const bcrypt = require('bcryptjs');
 const router = express.Router();
@@ -14,6 +15,167 @@ const requireSuperAdmin = (req, res, next) => {
   next();
 };
 
+// @route   GET /api/admin/users/:userId
+// @desc    Get detailed information for a single user
+// @access  Private (Super Admin only)
+router.get('/users/:userId', auth, requireSuperAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findById(userId)
+      .populate('institution', 'name')
+      .populate('course', 'name code');
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const subscriptions = await Subscription.find({ userId })
+      .populate('courseId', 'name code')
+      .sort({ createdAt: -1 });
+
+    const recentDownloads = await StudentDownload.find({ userId })
+      .sort({ downloadedAt: -1 })
+      .limit(20);
+
+    const auditHistory = [];
+
+    auditHistory.push({
+      type: 'account_created',
+      label: 'Account created',
+      timestamp: user.createdAt,
+      details: {
+        email: user.email,
+        role: user.role
+      }
+    });
+
+    if (user.lastLogin) {
+      auditHistory.push({
+        type: 'login',
+        label: 'Last login',
+        timestamp: user.lastLogin,
+        details: {
+          description: 'User last authenticated'
+        }
+      });
+    }
+
+    subscriptions.forEach((subscription) => {
+      auditHistory.push({
+        type: 'subscription',
+        label: `Subscription ${subscription.status}`,
+        timestamp: subscription.createdAt,
+        details: {
+          course: subscription.courseId?.name,
+          amount: subscription.amount,
+          currency: subscription.currency,
+          status: subscription.status,
+          isActive: subscription.isActive,
+          expiryDate: subscription.expiryDate,
+          transactionId: subscription.mpesaTransactionId
+        }
+      });
+
+      if (subscription.expiryDate) {
+        auditHistory.push({
+          type: 'subscription_expiry',
+          label: 'Subscription expiry',
+          timestamp: subscription.expiryDate,
+          details: {
+            course: subscription.courseId?.name,
+            amount: subscription.amount,
+            note: 'Subscription expiry date'
+          }
+        });
+      }
+    });
+
+    recentDownloads.forEach((download) => {
+      auditHistory.push({
+        type: 'download',
+        label: `Downloaded ${download.resourceTitle || download.filename}`,
+        timestamp: download.downloadedAt,
+        details: {
+          origin: download.origin,
+          courseName: download.courseName,
+          unitName: download.unitName,
+          topicTitle: download.topicTitle,
+          fileSize: download.fileSize
+        }
+      });
+    });
+
+    auditHistory.sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+
+    res.json({
+      success: true,
+      user: {
+        _id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        phoneNumber: user.phoneNumber,
+        role: user.role,
+        isActive: user.isActive,
+        institution: user.institution ? {
+          _id: user.institution._id,
+          name: user.institution.name
+        } : null,
+        course: user.course ? {
+          _id: user.course._id,
+          name: user.course.name,
+          code: user.course.code
+        } : null,
+        yearOfStudy: user.yearOfStudy,
+        subscription: user.subscription,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+        lastLogin: user.lastLogin
+      },
+      subscriptions: subscriptions.map((subscription) => ({
+        _id: subscription._id,
+        status: subscription.status,
+        isActive: subscription.isActive,
+        amount: subscription.amount,
+        currency: subscription.currency,
+        paymentMethod: subscription.paymentMethod,
+        startDate: subscription.startDate,
+        expiryDate: subscription.expiryDate,
+        paymentDate: subscription.paymentDate,
+        mpesaTransactionId: subscription.mpesaTransactionId,
+        mpesaReceiptNumber: subscription.mpesaReceiptNumber,
+        course: subscription.courseId ? {
+          _id: subscription.courseId._id,
+          name: subscription.courseId.name,
+          code: subscription.courseId.code
+        } : null,
+        createdAt: subscription.createdAt,
+        updatedAt: subscription.updatedAt
+      })),
+      downloads: recentDownloads.map((download) => ({
+        _id: download._id,
+        resourceTitle: download.resourceTitle,
+        filename: download.filename,
+        courseName: download.courseName,
+        unitName: download.unitName,
+        topicTitle: download.topicTitle,
+        origin: download.origin,
+        fileSize: download.fileSize,
+        downloadedAt: download.downloadedAt,
+        expiresAt: download.expiresAt
+      })),
+      auditHistory
+    });
+  } catch (error) {
+    console.error('❌ Error fetching user detail:', error);
+    res.status(500).json({
+      message: 'Server error fetching user detail',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+});
+
 // @route   GET /api/admin/users
 // @desc    Get all users with their details
 // @access  Private (Super Admin only)
@@ -22,7 +184,7 @@ router.get('/users', auth, requireSuperAdmin, async (req, res) => {
     console.log('📊 Fetching all users for super admin...');
     
     const users = await User.find({})
-      .select('firstName lastName email password role isActive institution createdAt lastLogin')
+      .select('firstName lastName email password phoneNumber role isActive institution createdAt lastLogin')
       .populate('institution', 'name')
       .sort({ createdAt: -1 });
 
@@ -36,6 +198,7 @@ router.get('/users', auth, requireSuperAdmin, async (req, res) => {
         lastName: user.lastName,
         email: user.email,
         password: user.password, // Super admin can see passwords for password recovery
+        phoneNumber: user.phoneNumber,
         role: user.role,
         isActive: user.isActive,
         institution: user.institution?.name || 'Not specified',
@@ -69,24 +232,44 @@ router.get('/subscriptions', auth, requireSuperAdmin, async (req, res) => {
     
     res.json({
       success: true,
-      subscriptions: subscriptions.map(sub => ({
-        _id: sub._id,
-        userId: sub.userId._id,
-        userName: `${sub.userId.firstName} ${sub.userId.lastName}`,
-        userEmail: sub.userId.email,
-        courseId: sub.courseId._id,
-        courseName: sub.courseId.name,
-        amount: sub.amount,
-        currency: sub.currency,
-        status: sub.status,
-        isActive: sub.isActive,
-        startDate: sub.startDate,
-        expiryDate: sub.expiryDate,
-        paymentDate: sub.paymentDate,
-        mpesaTransactionId: sub.mpesaTransactionId,
-        mpesaReceiptNumber: sub.mpesaReceiptNumber,
-        createdAt: sub.createdAt
-      }))
+      subscriptions: subscriptions.map(sub => {
+        const course = sub.courseId && typeof sub.courseId === 'object'
+          ? {
+              _id: sub.courseId._id,
+              name: sub.courseId.name,
+              code: sub.courseId.code
+            }
+          : null;
+
+        const user = sub.userId && typeof sub.userId === 'object'
+          ? {
+              _id: sub.userId._id,
+              firstName: sub.userId.firstName,
+              lastName: sub.userId.lastName,
+              email: sub.userId.email
+            }
+          : { _id: sub.userId };
+
+        return {
+          _id: sub._id,
+          userId: user._id,
+          userName: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+          userEmail: user.email || '',
+          courseId: course?._id || null,
+          courseName: course?.name || 'Unknown course',
+          courseCode: course?.code || null,
+          amount: sub.amount,
+          currency: sub.currency,
+          status: sub.status,
+          isActive: sub.isActive,
+          startDate: sub.startDate,
+          expiryDate: sub.expiryDate,
+          paymentDate: sub.paymentDate,
+          mpesaTransactionId: sub.mpesaTransactionId,
+          mpesaReceiptNumber: sub.mpesaReceiptNumber,
+          createdAt: sub.createdAt
+        };
+      })
     });
 
   } catch (error) {

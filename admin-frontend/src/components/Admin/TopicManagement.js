@@ -61,6 +61,12 @@ const TopicManagement = ({ unit, program, institution, userRole, onBack }) => {
     }
   });
 
+  const defaultContent = {
+    lectureVideo: { title: '', filename: '', filePath: '', duration: '', isPremium: false, status: 'pending' },
+    notes: { title: '', filename: '', filePath: '', isPremium: false, status: 'pending' },
+    youtubeResources: []
+  };
+
   // File upload states
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [uploadingNotes, setUploadingNotes] = useState(false);
@@ -69,23 +75,25 @@ const TopicManagement = ({ unit, program, institution, userRole, onBack }) => {
   const [videoUploadProgress, setVideoUploadProgress] = useState(0);
   const [notesUploadProgress, setNotesUploadProgress] = useState(0);
 
-  // Assessment management
-  const [openAssessmentDialog, setOpenAssessmentDialog] = useState(false);
-  const [assessmentType, setAssessmentType] = useState('cats');
-  const [editingAssessment, setEditingAssessment] = useState(null);
-  const [assessmentFormData, setAssessmentFormData] = useState({
-    title: '',
-    description: '',
-    url: '',
-    totalMarks: 100,
-    isPremium: true
-  });
-
   useEffect(() => {
-    if (unit) {
-      setTopics(unit.topics || []);
+    if (unit && program) {
+      fetchTopics();
     }
-  }, [unit]);
+  }, [unit, program]);
+
+  const fetchTopics = async () => {
+    try {
+      setLoading(true);
+      const response = await api.get(`/api/courses/${program._id}/units/${unit._id}/topics`);
+      setTopics(response.data.topics || []);
+    } catch (error) {
+      console.error('Error fetching topics:', error);
+      // Fallback to embedded topics
+      setTopics(unit.topics || []);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleVideoUpload = async (file) => {
     if (!file) return null;
@@ -211,6 +219,7 @@ const TopicManagement = ({ unit, program, institution, userRole, onBack }) => {
 
   const handleTopicSubmit = async () => {
     try {
+      setError(null);
       let updatedTopicData = { ...topicFormData };
       
       // Upload video file if selected
@@ -222,6 +231,8 @@ const TopicManagement = ({ unit, program, institution, userRole, onBack }) => {
             filename: videoUploadResult.filename,
             filePath: videoUploadResult.filePath,
             fileSize: videoUploadResult.fileSize,
+            gridFsFileId: videoUploadResult.gridFsFileId,
+            uploadedBy: videoUploadResult.uploadedBy,
             status: userRole === 'super_admin' ? 'approved' : 'pending'
           };
         }
@@ -236,46 +247,37 @@ const TopicManagement = ({ unit, program, institution, userRole, onBack }) => {
             filename: notesUploadResult.filename,
             filePath: notesUploadResult.filePath,
             fileSize: notesUploadResult.fileSize,
+            gridFsFileId: notesUploadResult.gridFsFileId,
+            uploadedBy: notesUploadResult.uploadedBy,
             status: userRole === 'super_admin' ? 'approved' : 'pending'
           };
         }
       }
       
-      if (editingTopic) {
+      if (editingTopic && editingTopic._id) {
         await api.put(`/api/courses/${program._id}/units/${unit._id}/topics/${editingTopic._id}`, updatedTopicData);
       } else {
         await api.post(`/api/courses/${program._id}/units/${unit._id}/topics`, updatedTopicData);
       }
       
-      // Refresh unit data
-      const response = await api.get(`/api/courses/${program._id}`);
-      const updatedUnit = response.data.course.units.find(u => u._id === unit._id);
-      setTopics(updatedUnit.topics || []);
+      // Refresh topics from the API
+      await fetchTopics();
       
       // Reset form
       setOpenTopicDialog(false);
       setEditingTopic(null);
       setVideoFile(null);
       setNotesFile(null);
+      setTopicFormData({
+        topicNumber: topics.length + 1,
+        title: '',
+        description: '',
+        learningOutcomes: [],
+        content: defaultContent
+      });
     } catch (error) {
       console.error('Error saving topic:', error);
-      setError('Failed to save topic. Please try again.');
-    }
-  };
-
-  const handleAssessmentSubmit = async () => {
-    try {
-      if (editingAssessment) {
-        await api.put(`/api/courses/${program._id}/units/${unit._id}/assessments/${assessmentType}/${editingAssessment._id}`, assessmentFormData);
-      } else {
-        await api.post(`/api/courses/${program._id}/units/${unit._id}/assessments/${assessmentType}`, assessmentFormData);
-      }
-      
-      setOpenAssessmentDialog(false);
-      setEditingAssessment(null);
-    } catch (error) {
-      console.error('Error saving assessment:', error);
-      setError('Failed to save assessment. Please try again.');
+      setError(error.response?.data?.message || 'Failed to save topic. Please try again.');
     }
   };
 
@@ -300,7 +302,6 @@ const TopicManagement = ({ unit, program, institution, userRole, onBack }) => {
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
         <Tabs value={tabValue} onChange={(e, v) => setTabValue(v)}>
           <Tab icon={<VideoLibrary />} label="Topics & Content" />
-          <Tab icon={<Assignment />} label="Assessments" />
         </Tabs>
       </Box>
 
@@ -319,6 +320,7 @@ const TopicManagement = ({ unit, program, institution, userRole, onBack }) => {
               variant="contained"
               startIcon={<Add />}
               onClick={() => {
+                setEditingTopic(null);
                 setTopicFormData({
                   topicNumber: topics.length + 1,
                   title: '',
@@ -348,12 +350,37 @@ const TopicManagement = ({ unit, program, institution, userRole, onBack }) => {
                       <Box>
                         <IconButton size="small" onClick={() => {
                           setEditingTopic(topic);
-                          setTopicFormData(topic);
+                          const safe = {
+                            topicNumber: Number(topic.topicNumber) || 1,
+                            title: topic.title || '',
+                            description: topic.description || '',
+                            learningOutcomes: Array.isArray(topic.learningOutcomes) ? topic.learningOutcomes : [],
+                            content: {
+                              lectureVideo: { ...defaultContent.lectureVideo, ...(topic.content?.lectureVideo || {}) },
+                              notes: { ...defaultContent.notes, ...(topic.content?.notes || {}) },
+                              youtubeResources: Array.isArray(topic.content?.youtubeResources) ? topic.content.youtubeResources : []
+                            }
+                          };
+                          setTopicFormData(safe);
                           setOpenTopicDialog(true);
                         }}>
                           <Edit />
                         </IconButton>
-                        <IconButton size="small" color="error">
+                        <IconButton 
+                          size="small" 
+                          color="error"
+                          onClick={async () => {
+                            if (window.confirm(`Are you sure you want to delete "${topic.title}"? This will also delete all associated content.`)) {
+                              try {
+                                await api.delete(`/api/courses/${program._id}/units/${unit._id}/topics/${topic._id}`);
+                                await fetchTopics();
+                              } catch (error) {
+                                console.error('Error deleting topic:', error);
+                                setError('Failed to delete topic. Please try again.');
+                              }
+                            }
+                          }}
+                        >
                           <Delete />
                         </IconButton>
                       </Box>
@@ -396,14 +423,6 @@ const TopicManagement = ({ unit, program, institution, userRole, onBack }) => {
               </Grid>
             ))}
           </Grid>
-        </Box>
-      )}
-
-      {/* Assessments Tab */}
-      {tabValue === 1 && (
-        <Box>
-          <Typography variant="h6" sx={{ mb: 3 }}>Unit Assessments</Typography>
-          {/* Assessment content will go here */}
         </Box>
       )}
 
@@ -459,7 +478,7 @@ const TopicManagement = ({ unit, program, institution, userRole, onBack }) => {
               <TextField
                 fullWidth
                 label="Video Title"
-                value={topicFormData.content.lectureVideo.title}
+                value={topicFormData.content?.lectureVideo?.title || ''}
                 onChange={(e) => setTopicFormData(prev => ({
                   ...prev,
                   content: {
@@ -476,7 +495,7 @@ const TopicManagement = ({ unit, program, institution, userRole, onBack }) => {
               <TextField
                 fullWidth
                 label="Duration (e.g., 45 min)"
-                value={topicFormData.content.lectureVideo.duration}
+                value={topicFormData.content?.lectureVideo?.duration || ''}
                 onChange={(e) => setTopicFormData(prev => ({
                   ...prev,
                   content: {
@@ -533,7 +552,7 @@ const TopicManagement = ({ unit, program, institution, userRole, onBack }) => {
               <TextField
                 fullWidth
                 label="Notes Title"
-                value={topicFormData.content.notes.title}
+                value={topicFormData.content?.notes?.title || ''}
                 onChange={(e) => setTopicFormData(prev => ({
                   ...prev,
                   content: {
@@ -550,7 +569,7 @@ const TopicManagement = ({ unit, program, institution, userRole, onBack }) => {
               <FormControlLabel
                 control={
                   <Switch
-                    checked={topicFormData.content.notes.isPremium}
+                    checked={!!topicFormData.content?.notes?.isPremium}
                     onChange={(e) => setTopicFormData(prev => ({
                       ...prev,
                       content: {
