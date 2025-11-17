@@ -21,6 +21,8 @@ const defaultAllowedOrigins = [
   'https://kibetronoh.com',
   'https://eduvault-exms.onrender.com',
   'https://68dc2615ba397bb2188ac9e7--warm-tiramisu-bf5ea3.netlify.app',
+  'https://egerton-ai.onrender.com',
+  'https://egertonai.aurafixx.com',
   'http://localhost:3000',
   'http://localhost:3001',
   'http://localhost:3002'
