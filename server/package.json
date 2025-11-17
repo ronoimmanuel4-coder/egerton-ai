@@ -19,7 +19,8 @@
     "update-admin-password": "node scripts/updateAdminPassword.js",
     "debug-admin": "node scripts/debugAdmin.js",
     "fix-admin-password": "node scripts/fixAdminPassword.js",
-    "debug-upload": "node scripts/debugUpload.js"
+    "debug-upload": "node scripts/debugUpload.js",
+    "get-egerton-id": "node scripts/getEgertonId.js"
   },
   "dependencies": {
     "axios": "^1.5.0",
@@ -40,7 +41,8 @@
     "nodemailer": "^6.9.4",
     "qrcode": "^1.5.4",
     "socket.io": "^4.7.2",
-    "stripe": "^13.5.0"
+    "stripe": "^13.5.0",
+    "web3": "^4.16.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

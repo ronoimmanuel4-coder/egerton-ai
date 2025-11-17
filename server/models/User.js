@@ -44,11 +44,30 @@ const userSchema = new mongoose.Schema({
     ref: 'Course',
     required: function() { return this.role === 'student'; }
   },
+  subcourse: {
+    type: String,
+    trim: true,
+    default: '',
+    maxlength: 120,
+  },
   yearOfStudy: {
     type: Number,
     min: 1,
     max: 6,
     required: function() { return this.role === 'student'; }
+  },
+  studyPeriod: {
+    type: {
+      type: String,
+      enum: ['semester', 'term'],
+      required: function() { return this.role === 'student'; }
+    },
+    number: {
+      type: Number,
+      min: 1,
+      max: 12,
+      required: function() { return this.role === 'student'; }
+    }
   },
   subscription: {
     isActive: {
@@ -60,9 +79,14 @@ const userSchema = new mongoose.Schema({
     transactionId: String
   },
   jobUnlocks: [{
-    jobId: {
+    unlockedJobs: [{
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Job'
+      ref: 'Job',
+      default: []
+    }],
+    gamification: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'UserGamification'
     },
     unlockedAt: {
       type: Date,
@@ -81,6 +105,10 @@ const userSchema = new mongoose.Schema({
   isActive: {
     type: Boolean,
     default: true
+  },
+  gamification: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'UserGamification'
   }
 }, {
   timestamps: true

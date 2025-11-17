@@ -22,6 +22,7 @@ import {
   LazyNotesManagement,
   LazyCATManagement,
   LazyExamManagement,
+  LazyMetaverseAdmin,
   PageLoader
 } from './utils/lazyComponents';
 
@@ -207,6 +208,13 @@ function App() {
                       <Route path="/admin/exams" element={
                         <ProtectedRoute requiredRole={[ 'mini_admin', 'super_admin' ]}>
                           <LazyExamManagement />
+                        </ProtectedRoute>
+                      } />
+
+                      {/* Metaverse Admin */}
+                      <Route path="/metaverse/admin" element={
+                        <ProtectedRoute requiredRole={[ 'super_admin' ]}>
+                          <LazyMetaverseAdmin />
                         </ProtectedRoute>
                       } />
 

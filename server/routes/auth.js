@@ -2,6 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
+const Course = require('../models/Course');
 const { auth } = require('../middleware/auth');
 const router = express.Router();
 
@@ -23,7 +24,10 @@ router.post('/register', [
   body('phoneNumber').isMobilePhone('en-KE'),
   body('institution').isMongoId(),
   body('course').isMongoId(),
-  body('yearOfStudy').isInt({ min: 1, max: 6 })
+  body('yearOfStudy').isInt({ min: 1, max: 6 }),
+  body('studyPeriod.type').isIn(['semester', 'term']),
+  body('studyPeriod.number').isInt({ min: 1, max: 12 }),
+  body('subcourse').optional().isString().trim().isLength({ min: 1 })
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -31,7 +35,18 @@ router.post('/register', [
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { email, password, firstName, lastName, phoneNumber, institution, course, yearOfStudy } = req.body;
+    const {
+      email,
+      password,
+      firstName,
+      lastName,
+      phoneNumber,
+      institution,
+      course,
+      yearOfStudy,
+      studyPeriod,
+      subcourse
+    } = req.body;
 
     // Check if user already exists
     const existingUser = await User.findOne({ 
@@ -44,6 +59,52 @@ router.post('/register', [
       });
     }
 
+    const courseDoc = await Course.findById(course)
+      .select('institution scheduleType duration subcourses')
+      .lean();
+
+    if (!courseDoc) {
+      return res.status(400).json({ message: 'Selected course could not be found' });
+    }
+
+    if (String(courseDoc.institution) !== institution) {
+      return res.status(400).json({ message: 'Course does not belong to the selected institution' });
+    }
+
+    const maxYears = Number.isInteger(courseDoc?.duration?.years) ? courseDoc.duration.years : 6;
+    if (yearOfStudy > maxYears) {
+      return res.status(400).json({
+        message: `Year of study must be between 1 and ${maxYears} for this course`
+      });
+    }
+
+    const expectedType = courseDoc.scheduleType === 'terms' ? 'term' : 'semester';
+    if (studyPeriod?.type !== expectedType) {
+      return res.status(400).json({
+        message: `Selected course uses ${expectedType === 'term' ? 'terms' : 'semesters'}.`
+      });
+    }
+
+    const maxPeriods = Number.isInteger(courseDoc?.duration?.semesters)
+      ? courseDoc.duration.semesters
+      : 12;
+
+    if (studyPeriod?.number < 1 || studyPeriod?.number > maxPeriods) {
+      return res.status(400).json({
+        message: `${expectedType === 'term' ? 'Term' : 'Semester'} must be between 1 and ${maxPeriods}`
+      });
+    }
+
+    if (Array.isArray(courseDoc.subcourses) && courseDoc.subcourses.length > 0) {
+      if (!subcourse) {
+        return res.status(400).json({ message: 'Select your subcourse / specialization for this program' });
+      }
+
+      if (!courseDoc.subcourses.includes(subcourse)) {
+        return res.status(400).json({ message: 'Selected subcourse is not valid for this program' });
+      }
+    }
+
     // Create new user
     const user = new User({
       email,
@@ -53,7 +114,12 @@ router.post('/register', [
       phoneNumber,
       institution,
       course,
-      yearOfStudy
+      subcourse: subcourse || undefined,
+      yearOfStudy,
+      studyPeriod: {
+        type: studyPeriod.type,
+        number: studyPeriod.number
+      }
     });
 
     await user.save();
@@ -72,7 +138,9 @@ router.post('/register', [
         role: user.role,
         institution: user.institution,
         course: user.course,
-        yearOfStudy: user.yearOfStudy
+        subcourse: user.subcourse || '',
+        yearOfStudy: user.yearOfStudy,
+        studyPeriod: user.studyPeriod
       }
     });
   } catch (error) {
@@ -152,7 +220,9 @@ router.post('/login', [
         role: user.role,
         institution: user.institution,
         course: user.course,
+        subcourse: user.subcourse || '',
         yearOfStudy: user.yearOfStudy,
+        studyPeriod: user.studyPeriod,
         subscription: user.subscription,
         lastLogin: user.lastLogin
       }
@@ -185,7 +255,9 @@ router.get('/me', auth, async (req, res) => {
         phoneNumber: user.phoneNumber,
         institution: user.institution,
         course: user.course,
+        subcourse: user.subcourse || '',
         yearOfStudy: user.yearOfStudy,
+        studyPeriod: user.studyPeriod,
         subscription: user.subscription,
         lastLogin: user.lastLogin
       }

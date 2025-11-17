@@ -1,68 +1,82 @@
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-black text-white overflow-x-hidden;
+    margin: 0;
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  #root {
+    min-height: 100vh;
+  }
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
-}
+@layer components {
+  .glass-effect {
+    @apply bg-white/5 backdrop-blur-md border border-white/10;
+  }
 
-* {
-  box-sizing: border-box;
-}
+  .btn-primary {
+    @apply px-6 py-3 bg-egerton-green text-white font-semibold rounded-lg 
+           transition-all duration-300 hover:bg-egerton-dark-green 
+           hover:scale-105 active:scale-95;
+  }
 
-html {
-  scroll-behavior: smooth;
+  .btn-secondary {
+    @apply px-6 py-3 bg-transparent border-2 border-egerton-gold text-egerton-gold 
+           font-semibold rounded-lg transition-all duration-300 
+           hover:bg-egerton-gold hover:text-black hover:scale-105 active:scale-95;
+  }
+
+  .text-gradient {
+    @apply bg-gradient-to-r from-egerton-green via-egerton-gold to-egerton-red 
+           bg-clip-text text-transparent;
+  }
 }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
+  width: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  @apply bg-black;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
-  border-radius: 4px;
+  @apply bg-egerton-green rounded-full;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a8a8a8;
+  @apply bg-egerton-dark-green;
 }
 
-/* Loading animations */
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
+/* Loading animation */
+@keyframes pulse-glow {
+  0%, 100% {
     opacity: 1;
   }
+  50% {
+    opacity: 0.5;
+  }
 }
 
-.fade-in {
-  animation: fadeIn 0.5s ease-in;
+.pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
 }
 
-/* Utility classes */
-.text-center {
-  text-align: center;
-}
-
-.full-height {
-  min-height: 100vh;
-}
-
-.flex-center {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+/* 3D text effect */
+.text-3d {
+  text-shadow: 
+    1px 1px 2px rgba(0, 166, 81, 0.3),
+    2px 2px 4px rgba(0, 166, 81, 0.2),
+    3px 3px 6px rgba(0, 166, 81, 0.1);
 }

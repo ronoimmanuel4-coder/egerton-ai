@@ -7,6 +7,7 @@ export const LazyVideoManagement = lazy(() => import('../pages/Admin/VideoManage
 export const LazyNotesManagement = lazy(() => import('../pages/Admin/NotesManagementPage'));
 export const LazyCATManagement = lazy(() => import('../pages/Admin/CATManagementPage'));
 export const LazyExamManagement = lazy(() => import('../pages/Admin/ExamManagementPage'));
+export const LazyMetaverseAdmin = lazy(() => import('../pages/MetaverseAdminPage'));
 
 // Loading fallback component
 export const PageLoader = () => {

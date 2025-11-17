@@ -9,6 +9,7 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const { initializeSocket } = require('./socket/socketHandler');
+const aiStudyPartner = require('./services/aiStudyPartner');
 require('dotenv').config();
 
 const app = express();
@@ -162,6 +163,15 @@ app.use('/api/student', require('./routes/studentContent'));
 app.use('/api/subscription', require('./routes/subscription'));
 app.use('/api/student-downloads', require('./routes/studentDownloads'));
 app.use('/api/chatbot', require('./routes/chatbot'));
+app.use('/api/ai', require('./routes/ai')); // AI integration routes (Local Ollama)
+app.use('/api/exam-papers', require('./routes/examPapers')); // Exam papers for AI training
+
+// Debug route logging
+console.log('Mounting gamification routes at /api/gamify');
+app.use('/api/gamify', (req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  next();
+}, require('./routes/gamification')); // Gamification system
 app.use('/api/debug', require('./routes/debugContent')); // Debug content routes
 app.use('/api/public', require('./routes/public')); // Public routes (e.g., success stories)
 
@@ -237,4 +247,30 @@ server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Socket.IO enabled for real-time notifications`);
+
+  // Check Egerton AI (Ollama) status on startup
+  (async () => {
+    try {
+      console.log('🧠 Checking Egerton AI (Ollama) status...');
+      const status = await aiStudyPartner.checkConnection();
+
+      if (status.connected && status.modelAvailable) {
+        console.log(`✅ Egerton AI is ACTIVE. Model: ${status.model}`);
+      } else if (status.connected) {
+        console.log(`⚠️ Egerton AI connected to Ollama, but model "${status.model}" is NOT available.`);
+        if (status.availableModels && status.availableModels.length > 0) {
+          console.log(`   Available models: ${status.availableModels.join(', ')}`);
+        } else {
+          console.log('   No models reported by Ollama.');
+        }
+      } else {
+        console.log('❌ Egerton AI is NOT active.');
+        if (status.error || status.message) {
+          console.log(`   Reason: ${status.error || status.message}`);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Failed to check Egerton AI status:', error.message);
+    }
+  })();
 });

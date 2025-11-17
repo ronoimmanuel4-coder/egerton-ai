@@ -1,11 +1,67 @@
 const express = require('express');
-const axios = require('axios');
 const { body, validationResult } = require('express-validator');
 const { auth } = require('../middleware/auth');
+const EGERTON_CONFIG = require('../config/egerton');
+const { generateText } = require('../services/geminiClient');
 const router = express.Router();
 
+// Helper function to call AI (Gemini via geminiClient)
+async function callLocalLlama(messages, options = {}) {
+  const {
+    temperature = 0.7,
+    maxTokens = 500,
+  } = options;
+
+  const systemMessage = messages.find((m) => m.role === 'system');
+  const userMessages = messages.filter((m) => m.role === 'user');
+  const lastUser = userMessages.length > 0 ? userMessages[userMessages.length - 1] : null;
+
+  const aiText = await generateText({
+    systemPrompt: systemMessage?.content || EGERTON_CONFIG.ai.prompts.base,
+    userMessage: lastUser?.content || '',
+    history: [],
+    temperature,
+    maxOutputTokens: maxTokens,
+  });
+
+  return aiText;
+}
+
+// Helper to build enriched context
+function buildEgertonContext(user, context = {}) {
+  let systemPrompt = EGERTON_CONFIG.ai.prompts.base;
+
+  // Add student context
+  if (user) {
+    systemPrompt += '\n\n' + EGERTON_CONFIG.ai.prompts.studentContext({
+      firstName: user.firstName,
+      lastName: user.lastName,
+      course: user.course,
+      yearOfStudy: user.yearOfStudy,
+      learningPattern: user.learningPattern,
+      strengths: user.strengths,
+      weaknesses: user.weaknesses,
+    });
+  }
+
+  // Add course/unit context
+  if (context.course || context.unit) {
+    systemPrompt += '\n\n' + EGERTON_CONFIG.ai.prompts.courseContext(
+      context.course || user?.course || {},
+      context.unit
+    );
+  }
+
+  // Add lecturer context if available
+  if (context.lecturer) {
+    systemPrompt += '\n\n' + EGERTON_CONFIG.ai.prompts.lecturerContext(context.lecturer);
+  }
+
+  return systemPrompt;
+}
+
 // @route   POST /api/chatbot/query
-// @desc    Send query to AI chatbot
+// @desc    Send query to Egerton AI Assistant (Local Llama)
 // @access  Private
 router.post('/query', [
   auth,
@@ -19,72 +75,52 @@ router.post('/query', [
     }
 
     const { message, context } = req.body;
+    const user = req.user;
 
-    // Prepare context for the AI
-    let systemPrompt = `You are an educational assistant for EduVault, a platform for Kenyan higher education students. 
-    You help students with:
-    1. Explaining academic concepts and topics
-    2. Creating quizzes and practice questions
-    3. Study tips and learning strategies
-    4. Course-related questions
-    
-    Keep responses concise, educational, and relevant to Kenyan higher education context.
-    If asked to create a quiz, format it clearly with numbered questions and multiple choice options where appropriate.`;
-
-    if (context) {
-      if (context.course) systemPrompt += `\nStudent's course: ${context.course}`;
-      if (context.year) systemPrompt += `\nStudent's year: ${context.year}`;
-      if (context.unit) systemPrompt += `\nCurrent unit: ${context.unit}`;
-    }
+    // Build Egerton-specific context
+    const systemPrompt = buildEgertonContext(user, context);
 
     try {
-      // Call to xAI Grok API (or fallback to OpenAI-compatible API)
-      const response = await axios.post(process.env.GROK_API_URL || 'https://api.openai.com/v1/chat/completions', {
-        model: 'grok-beta', // or 'gpt-3.5-turbo' for fallback
-        messages: [
-          {
-            role: 'system',
-            content: systemPrompt
-          },
-          {
-            role: 'user',
-            content: message
-          }
-        ],
-        max_tokens: 500,
-        temperature: 0.7
-      }, {
-        headers: {
-          'Authorization': `Bearer ${process.env.GROK_API_KEY || process.env.OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const aiResponse = response.data.choices[0].message.content;
+      // Call local Llama model
+      const aiResponse = await callLocalLlama([
+        {
+          role: 'system',
+          content: systemPrompt,
+        },
+        {
+          role: 'user',
+          content: message,
+        },
+      ]);
 
       res.json({
         message: aiResponse,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        model: EGERTON_CONFIG.ai.local.model,
+        university: 'Egerton University',
       });
 
     } catch (aiError) {
       console.error('AI API error:', aiError);
       
       // Fallback response if AI service is unavailable
-      let fallbackResponse = "I'm currently unable to connect to the AI service. ";
+      let fallbackResponse = "I'm currently unable to connect to the Egerton AI Learning Assistant. ";
       
       if (message.toLowerCase().includes('quiz')) {
         fallbackResponse += "For quiz creation, try breaking down your topic into key concepts and create questions around those areas.";
+      } else if (message.toLowerCase().includes('exam')) {
+        fallbackResponse += "For exam preparation, review your course materials and past papers from your lecturer.";
       } else if (message.toLowerCase().includes('explain')) {
-        fallbackResponse += "For explanations, I recommend checking your course materials or consulting with your lecturers.";
+        fallbackResponse += "For explanations, I recommend checking your Egerton course materials or consulting with your lecturers.";
       } else {
-        fallbackResponse += "Please try again later or consult your course materials for assistance.";
+        fallbackResponse += "Please try again in a moment. If the issue persists, contact support.";
       }
 
       res.json({
         message: fallbackResponse,
         timestamp: new Date().toISOString(),
-        isFailover: true
+        isFailover: true,
+        suggestion: 'Make sure Ollama is running: ollama serve',
       });
     }
 
@@ -95,13 +131,14 @@ router.post('/query', [
 });
 
 // @route   POST /api/chatbot/quiz
-// @desc    Generate quiz for specific topic
+// @desc    Generate quiz for specific topic using Egerton AI
 // @access  Private
 router.post('/quiz', [
   auth,
   body('topic').trim().isLength({ min: 2, max: 200 }),
   body('questionCount').isInt({ min: 1, max: 10 }),
-  body('difficulty').optional().isIn(['easy', 'medium', 'hard'])
+  body('difficulty').optional().isIn(['easy', 'medium', 'hard']),
+  body('context').optional().isObject()
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -109,9 +146,24 @@ router.post('/quiz', [
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { topic, questionCount, difficulty = 'medium' } = req.body;
+    const { topic, questionCount, difficulty = 'medium', context } = req.body;
+    const user = req.user;
+
+    // Build context for quiz generation
+    let systemPrompt = `You are the Egerton University AI quiz generator. Create academically rigorous quizzes aligned with Egerton's curriculum standards.`;
+    
+    if (user?.course) {
+      systemPrompt += `\n\nStudent Course: ${user.course.name} (${user.course.code})`;
+      systemPrompt += `\nYear of Study: ${user.yearOfStudy}`;
+    }
+
+    if (context?.lecturer) {
+      systemPrompt += `\n\nLecturer Context: ${JSON.stringify(context.lecturer)}`;
+      systemPrompt += `\nNote: Generate questions in the style this lecturer typically uses.`;
+    }
 
     const quizPrompt = `Create a ${difficulty} level quiz about "${topic}" with exactly ${questionCount} multiple choice questions. 
+    
     Format each question as:
     Q1: [Question text]
     A) [Option A]
@@ -119,39 +171,31 @@ router.post('/quiz', [
     C) [Option C]
     D) [Option D]
     Correct Answer: [Letter]
+    Explanation: [Brief explanation of why this is correct]
     
-    Make questions relevant to Kenyan higher education context where applicable.`;
+    Make questions relevant to Egerton University curriculum and Kenyan higher education context.
+    Ensure questions test deep understanding, not just memorization.`;
 
     try {
-      const response = await axios.post(process.env.GROK_API_URL || 'https://api.openai.com/v1/chat/completions', {
-        model: 'grok-beta',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are an educational quiz generator for Kenyan higher education students.'
-          },
-          {
-            role: 'user',
-            content: quizPrompt
-          }
-        ],
-        max_tokens: 800,
-        temperature: 0.8
-      }, {
-        headers: {
-          'Authorization': `Bearer ${process.env.GROK_API_KEY || process.env.OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const quiz = response.data.choices[0].message.content;
+      const quiz = await callLocalLlama([
+        {
+          role: 'system',
+          content: systemPrompt,
+        },
+        {
+          role: 'user',
+          content: quizPrompt,
+        },
+      ], { temperature: 0.8, maxTokens: 800 });
 
       res.json({
         quiz,
         topic,
         questionCount,
         difficulty,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        model: EGERTON_CONFIG.ai.local.model,
+        university: 'Egerton University',
       });
 
     } catch (aiError) {
@@ -166,8 +210,9 @@ B) Option B
 C) Option C
 D) Option D
 Correct Answer: C
+Explanation: This is a template quiz.
 
-Please note: AI service is currently unavailable. This is a template quiz. For better quizzes, please try again later.`;
+Please note: Egerton AI Learning Assistant is currently unavailable. Try again later or contact support if this keeps happening.`;
 
       res.json({
         quiz: fallbackQuiz,
@@ -175,7 +220,8 @@ Please note: AI service is currently unavailable. This is a template quiz. For b
         questionCount,
         difficulty,
         timestamp: new Date().toISOString(),
-        isFailover: true
+        isFailover: true,
+        suggestion: 'Start Ollama service to use AI quiz generation',
       });
     }
 
@@ -186,44 +232,57 @@ Please note: AI service is currently unavailable. This is a template quiz. For b
 });
 
 // @route   GET /api/chatbot/suggestions
-// @desc    Get suggested questions/topics
+// @desc    Get suggested questions/topics for Egerton students
 // @access  Private
 router.get('/suggestions', auth, async (req, res) => {
   try {
     const { course, unit } = req.query;
+    const user = req.user;
 
-    // Predefined suggestions based on common Kenyan higher education topics
+    // Egerton-specific AI suggestions
     let suggestions = [
-      "Explain the concept of...",
-      "Create a 5-question quiz on...",
-      "What are the key points about...?",
-      "How do I study for...?",
-      "Give me practice questions for...",
-      "Summarize the main ideas of...",
-      "What are the applications of...?",
-      "Compare and contrast...",
-      "Define the following terms...",
-      "Explain with examples..."
+      "Explain this concept in simple terms",
+      "Create a practice quiz for me",
+      "What exam questions might my lecturer ask?",
+      "Generate a mnemonic to remember this",
+      "What are the key points I should focus on?",
+      "Help me understand this better",
+      "Give me practice questions",
+      "What's the best way to study this topic?",
+      "Predict what might be on the exam",
+      "Create a study plan for me"
     ];
 
-    // Add course-specific suggestions if available
+    // Add personalized suggestions based on student profile
+    if (user?.course) {
+      suggestions.unshift(
+        `Study tips for ${user.course.name}`,
+        `Quiz me on ${user.course.name} topics`,
+        `Exam predictions for my course`
+      );
+    }
+
     if (course) {
       suggestions.unshift(
         `Explain key concepts in ${course}`,
-        `Create a quiz for ${course}`,
-        `Study tips for ${course}`
+        `What exam topics are common in ${course}?`,
+        `Create a study guide for ${course}`
       );
     }
 
     if (unit) {
       suggestions.unshift(
-        `Explain ${unit} concepts`,
+        `Explain ${unit} in detail`,
         `Quiz me on ${unit}`,
-        `${unit} practice questions`
+        `What might my lecturer ask about ${unit}?`
       );
     }
 
-    res.json({ suggestions });
+    res.json({ 
+      suggestions,
+      university: 'Egerton University',
+      aiName: EGERTON_CONFIG.ai.systemName,
+    });
   } catch (error) {
     console.error('Get suggestions error:', error);
     res.status(500).json({ message: 'Server error' });

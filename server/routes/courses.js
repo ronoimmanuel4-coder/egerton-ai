@@ -357,7 +357,7 @@ router.get('/', async (req, res) => {
       query.$text = { $search: search };
     }
 
-    const projection = 'name code department duration description requirements careerProspects subcourses fees popularity institution academicYears';
+    const projection = 'name code department duration scheduleType description requirements careerProspects subcourses fees popularity institution academicYears';
 
     const courses = await Course.find(query)
       .select(projection)
